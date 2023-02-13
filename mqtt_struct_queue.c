@@ -1,12 +1,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef struct {
-    int value;
+typedef struct queueElem {
+    char *topic;
+    char *value;
     struct queueElem *next;
 } queueElem;
 
-typedef struct {
+typedef struct Queue {
     queueElem * head;
     queueElem * tail;
 } Queue;
@@ -18,9 +19,10 @@ Queue * initQueue() {
  return Q;
 }
 
-void enqueue(Queue * Q, int a) {
-    queueElem * el = malloc(sizeof(queueElem));
-    el->value = a;
+void enqueue(Queue * Q, char *topic, char *value) {
+    queueElem *el = malloc(sizeof(queueElem));
+    el->topic = topic;
+    el->value = value;
     el->next = NULL;
     if(Q->head == NULL && Q->tail == NULL) {
         Q->head=el;
@@ -32,45 +34,11 @@ void enqueue(Queue * Q, int a) {
     }
 }
 
-int dequeue(Queue * Q) {
-    if(Q->head == NULL && Q->tail == NULL) {
-        return -1;
-    }
-    else {
-        queueElem * out = Q->head;
-        Q->head = out->next;
-        out->next = NULL;
-        int ausgabe = out->value;
-        free(out);
-        return ausgabe;
-    }
-}
-
-void printQueue(Queue * Q) {
-    queueElem * temp = Q->head;
-    printf("queue:\n");
-    while(temp!= NULL) {
-        printf("%d\n", temp->value);
-        temp = temp->next;
-    }
-}
-void deleteQueue(Queue * Q) {
-    while(Q->head != NULL) {
-        dequeue(Q);
-    }
-    free(Q);
-}
-
-int main() {
-    Queue * queue = initQueue();
-    enqueue(queue, 10);
-    enqueue(queue, 11);
-    enqueue(queue, 12);
-    printQueue(queue);
-    dequeue(queue);
-    dequeue(queue);
-    dequeue(queue);
-    printQueue(queue);
-    deleteQueue(queue);
-    return 0;
+void dequeue(Queue * Q, char **topic, char **value) {
+    queueElem * out = Q->head;
+    Q->head = out->next;
+    out->next = NULL;
+    *topic = out->topic;
+    *value = out->value;
+    free(out);
 }

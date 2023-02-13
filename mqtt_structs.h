@@ -19,6 +19,16 @@ typedef struct {
    unsigned mqttControlPacketType : 4;
   } mqttFixedHeaderByte1Bits;
  };
+} mqttFixedHeaderTpl;
+
+typedef struct {
+ union {
+  uint8_t mqttFixedHeaderByte1;
+  struct {
+   unsigned mqttControlPacketFlags : 4;
+   unsigned mqttControlPacketType : 4;
+  } mqttFixedHeaderByte1Bits;
+ };
  uint8_t mqttFixedHeaderRemainingLength; 
  uint8_t mqttVariableHeaderProtocolNameMSB;           // byte 1
  uint8_t mqttVariableHeaderProtocolNameLSB;           // byte 2

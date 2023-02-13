@@ -8,3 +8,5 @@ mqtt_semaphore_test.c:
 	gcc mqtt_semaphore_test.c -o mqtt_semaphore_test
 mqtt_struct_queue.c:
 	gcc mqtt_struct_queue.c -o mqtt_struct_queue
+mqtt_struct_queue_test.c:
+	gcc mqtt_struct_queue_test.c -o mqtt_struct_queue_test
