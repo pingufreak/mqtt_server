@@ -33,6 +33,17 @@ int main(int argc, char *argv) {
  int serverSocketFD, clientSocketFD;
  struct sockaddr_in serverSocketSettings, clientSocketSettings;
  
+ // Semaphore für die Queue erstellen
+ sem_t *mySem = (sem_t*) malloc(sizeof(sem_t));
+ int semInit = sem_init(mySem, 0, 0);
+ if(semInit == 0) {
+  printf("Semaphore init success...\n");
+ }
+ else {
+  printf("Semaphore init failed...\n");
+  return EXIT_FAILURE;
+ }
+
  // serverSocketFD erstellen
  errno = 0;
  serverSocketFD = socket(AF_INET, SOCK_STREAM, 0);
@@ -324,10 +335,19 @@ void *clientThread(void *arg) {
   mqttControlPacketDisconnect->mqttFixedHeaderByte1 = mqttControlPacketDisconnectBuffer[index++];
   mqttControlPacketDisconnect->mqttFixedHeaderRemainingLength = mqttControlPacketDisconnectBuffer[index++];
 
+  /*
   // FIXME: DISCONNECT AUSWERTEN!!!
   for(int i = 0; i <sizeof(mqttControlPacketDisconnectBuffer); i++) {
    printf("%d %d\n", i, mqttControlPacketDisconnectBuffer[i]);
   }
+ 
+  */
+
+  close(clientThreadStruct->clientSocketFD);
+
+  #ifdef DEBUG 
+  printf("close(): clientThreadStruct->clientSocketFD\n");
+  #endif
  }
  if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == SUBSCRIBE) {
   #ifdef DEBUG 
@@ -398,44 +418,53 @@ void *clientThread(void *arg) {
   /*
    send() PUBLISH von dequeue
   */
+
+  // FIXMXE: So lange bis ein Disconnect Paket ankommt, bis die Semaphore freigegeben worden ist auf Queue
+  while(1) {
   // mqttControlPacketPublish vorbereiten und in Puffer zum Versand ablegen 
- 
- /* mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) malloc(sizeof(mqttControlPacketPublishTpl));
- 
- index = 0;
+  mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) malloc(sizeof(mqttControlPacketPublishTpl));
 
- mqttControlPacketPublish->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
- mqttControlPacketPublish->mqttFixedHeaderByte1Bits.mqttControlPacketType = PUBLISH;
- mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttFixedHeaderByte1;
+  index = 0;
 
- mqttControlPacketPublish->mqttFixedHeaderRemainingLength = 8;
- mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttFixedHeaderRemainingLength;
+  mqttControlPacketPublish->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
+  mqttControlPacketPublish->mqttFixedHeaderByte1Bits.mqttControlPacketType = PUBLISH;
+  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttFixedHeaderByte1;
 
- mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB = 0;
- mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB;
+  mqttControlPacketPublish->mqttFixedHeaderRemainingLength = 8;
+  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttFixedHeaderRemainingLength;
 
- mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = 3;
- mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB;
+  mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB = 0;
+  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB;
 
- mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0 = 't';
- mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0;
+  mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = 3;
+  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB;
 
- mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1 = '0';
- mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1;
+  mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0 = 't';
+  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0;
 
- mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2 = '1';
- mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2;
+  mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1 = '0';
+  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1;
 
- mqttControlPacketPublish->mqttVariableHeaderPayloadChar0 = '+';
- mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar0;
+  mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2 = '1';
+  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2;
 
- mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = '1';
- mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1;
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar0 = '+';
+  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar0;
 
- mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = '5';
- mqttControlPacketPublishBuffer[index] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
-*/
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = '1';
+  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1;
 
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = '5';
+  mqttControlPacketPublishBuffer[index] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
+
+  // FIXME: DEQUEUE
+
+  errno = 0;
+  send(clientSocketFDTmp, &mqttControlPacketPublishBuffer, sizeof(mqttControlPacketPublishBuffer), 0);
+  if( errno != 0 ) { handle_error("send() mqttControlPacketPublishBuffer"); };
+  }
+  // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
+  mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
  }
  /*
  if( errno != 0 ) { handle_error("send() mqttControlPacketSubackBuffer"); };

@@ -8,9 +8,6 @@ int count = 0;
 bool full;
 int items[5];
 
-void put() {
-}
-
 void put(sem_t *mySem, int number) {
  if(count == maxItems ) {
   sem_wait(mySem);
@@ -25,7 +22,7 @@ void put(sem_t *mySem, int number) {
 int get(sem_t *mySem) {
  if(count == 0) { 
     sem_wait(mySem);
- }
+ } 
 }
 
 int main() {
@@ -39,6 +36,24 @@ int main() {
   printf("Semaphore init failed...\n");
   return EXIT_FAILURE;
  }
- // FIXME thread starten, wert in sema sperren, speichern, freigeben, thread schließen
+ 
+ for(int i = 0; i < 100; i++) {
+    put(mySem,i);
+ }
+
+ printf("value put\n");
+ int value = get(mySem);
+ printf("value %d\n", value);
+value = get(mySem);
+ printf("value %d\n", value);
+value = get(mySem);
+ printf("value %d\n", value);
+value = get(mySem);
+ printf("value %d\n", value);
+value = get(mySem);
+ printf("value %d\n", value);
+value = get(mySem);
+ printf("value %d\n", value);
+
  return EXIT_SUCCESS;
 }
