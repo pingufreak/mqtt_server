@@ -13,7 +13,7 @@
  testType->zahl8 = atoi(argv[3]);
 */
 
-const char    *SERVER_IP = "192.168.1.2";
+const char    *SERVER_IP = "127.0.0.1";
 const uint16_t SERVER_PORT = 1883;
 
 // Aus bind(2) Beispiel 

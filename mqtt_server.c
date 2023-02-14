@@ -15,9 +15,10 @@
 
 #define DEBUG
 
-const char    *SERVER_IP = "192.168.1.2";
-const char    *SERVER_IF = "eth0";
+const char    *SERVER_IP = "127.0.0.1";
+const char    *SERVER_IF = "lo";
 const uint16_t SERVER_PORT = 1883;
+const uint8_t  SEM_WAIT = 10;
 
 // Aus bind(2) Beispiel 
 #define handle_error(msg) do { perror(msg); exit(EXIT_FAILURE); } while (0)
@@ -29,21 +30,18 @@ typedef struct clientThreadStructTpl {
   Queue *queue;
 } clientThreadStructTpl;
 
+sem_t semQueueFull, semQueueEmpty;
+pthread_mutex_t mutex;
+
 int main(int argc, char *argv) {
  int serverSocketFD, clientSocketFD;
  struct sockaddr_in serverSocketSettings, clientSocketSettings;
- 
- // Semaphore für die Queue erstellen
- sem_t *mySem = (sem_t*) malloc(sizeof(sem_t));
- int semInit = sem_init(mySem, 0, 0);
- if(semInit == 0) {
-  printf("Semaphore init success...\n");
- }
- else {
-  printf("Semaphore init failed...\n");
-  return EXIT_FAILURE;
- }
 
+ pthread_mutex_init(&mutex, NULL);
+ sem_init(&semQueueEmpty, 0, SEM_WAIT);
+ sem_init(&semQueueFull, 0, 0);
+
+  
  // serverSocketFD erstellen
  errno = 0;
  serverSocketFD = socket(AF_INET, SOCK_STREAM, 0);
@@ -154,26 +152,35 @@ int main(int argc, char *argv) {
   #ifdef DEBUG 
   printf("debug: pthread_create clientSocketFD\n"); 
   #endif
- 
  }
+
  errno = 0;
- 
+ close(serverSocketFD);
  if( errno != 0 ) { handle_error("close() serverSocketFD"); };
  #ifdef DEBUG 
  printf("debug: close() serverSocketFD\n");
  #endif
- 
- // threads speichern in liste und warten vor programmende
-//   pthread_join(threadId, NULL);
-//  close(serverSocketFD);
-/*
-  close(clientSocketFD);
-  if( errno != 0 ) { handle_error("close() clientSocketFD"); };
-  #ifdef DEBUG 
-  printf("debug: close() clientSocketFD\n"); 
-  #endif  
 
-*/
+ #ifdef DEBUG 
+ printf("debug: pthread_mutex_destroy(&mutex)\n");
+ #endif
+ errno = 0;
+ pthread_mutex_destroy(&mutex);
+ if( errno != 0 ) { handle_error("pthread_mutex_destroy(&mutex)"); };
+
+ #ifdef DEBUG 
+ printf("debug: sem_destroy(&semQueueEmpty)\n");
+ #endif
+ errno = 0;
+ sem_destroy(&semQueueEmpty);
+ if( errno != 0 ) { handle_error("sem_destroy(&semQueueEmpty)"); };
+
+ #ifdef DEBUG 
+ printf("debug: sem_destroy(&semQueueFull)\n");
+ #endif
+ errno = 0;
+ sem_destroy(&semQueueFull);
+ if( errno != 0 ) { handle_error("sem_destroy(&semQueueFull)"); };
 
  return EXIT_SUCCESS;
 }
@@ -185,7 +192,7 @@ void *clientThread(void *arg) {
 
  int index = 0;
 
- uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[8], mqttControlPacketSubscribeBuffer[8], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2];
+ uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[9], mqttControlPacketPublishSendBuffer[10], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2];
 
  /*
    recv() CONNECT
@@ -262,14 +269,14 @@ void *clientThread(void *arg) {
  mqttFixedHeader.mqttFixedHeaderByte1 = mqttFixedHeaderBuffer[0];
 
  if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == PUBLISH) {
-  #ifdef DEBUG 
-  printf("recv(): mqttFixedHeaderBuffer -> PUBLISH received\n");
-  #endif
- 
   /*
    recv() PUBLISH
   */
 
+  #ifdef DEBUG 
+  printf("recv(): mqttFixedHeaderBuffer -> PUBLISH received\n");
+  #endif
+ 
   errno = 0;
   recv(clientSocketFDTmp, &mqttControlPacketPublishBuffer, sizeof(mqttControlPacketPublishBuffer), 0);
   if( errno != 0 ) { handle_error("receive() mqttControlPacketPublishBuffer"); };
@@ -283,7 +290,6 @@ void *clientThread(void *arg) {
  
   index = 0;
 
-  mqttControlPacketPublish->mqttFixedHeaderByte1 = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttFixedHeaderRemainingLength = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = mqttControlPacketPublishBuffer[index++];
@@ -293,6 +299,9 @@ void *clientThread(void *arg) {
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar0 = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = mqttControlPacketPublishBuffer[index];
+
+  sem_wait(&semQueueEmpty);
+  pthread_mutex_lock(&mutex);
 
   char *topic = malloc(4);
   char *value = malloc(4);
@@ -308,6 +317,9 @@ void *clientThread(void *arg) {
   value[3] = '\0';
 
   enqueue(queue, topic, value);
+
+  pthread_mutex_unlock(&mutex);
+  sem_post(&semQueueFull);
 
   // FIXME: CONNECT AUSWERTEN!!!
   /*
@@ -343,49 +355,52 @@ void *clientThread(void *arg) {
  
   */
 
-  close(clientThreadStruct->clientSocketFD);
-
   #ifdef DEBUG 
   printf("close(): clientThreadStruct->clientSocketFD\n");
   #endif
+
+  errno = 0;
+  close(clientThreadStruct->clientSocketFD);
+  if( errno != 0 ) { handle_error("close(clientThreadStruct->clientSocketFD)"); };  
  }
+
  if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == SUBSCRIBE) {
-  #ifdef DEBUG 
-  printf("recv(): mqttFixedHeaderBuffer -> SUBSCRIBE received\n");
-  #endif
- 
   /*
    recv() SUBSCRIBE
   */
-  
-  errno = 0;
-  recv(clientSocketFDTmp, &mqttControlPacketSubscribeBuffer, sizeof(mqttControlPacketSubscribeBuffer), 0);
-  if( errno != 0 ) { handle_error("receive() mqttControlPacketSubscribeBuffer"); };
+
+  #ifdef DEBUG 
+  printf("recv(): mqttFixedHeaderBuffer -> SUBSCRIBE received\n");
+  #endif 
   
   #ifdef DEBUG 
   printf("recv(): mqttControlPacketSubscribeBuffer\n");
   #endif
 
- // mqttControlPacketSubscribe vorbereiten und in Puffer zum Versand ablegen 
- mqttControlPacketSubscribeTpl *mqttControlPacketSubscribe = (mqttControlPacketSubscribeTpl*) malloc(sizeof(mqttControlPacketSubscribeTpl));
+  errno = 0;
+  recv(clientSocketFDTmp, &mqttControlPacketSubscribeBuffer, sizeof(mqttControlPacketSubscribeBuffer), 0);
+  if( errno != 0 ) { handle_error("receive() mqttControlPacketSubscribeBuffer"); };
+
+  // mqttControlPacketSubscribe vorbereiten und in Puffer zum Versand ablegen 
+  mqttControlPacketSubscribeTpl *mqttControlPacketSubscribe = (mqttControlPacketSubscribeTpl*) malloc(sizeof(mqttControlPacketSubscribeTpl));
+  
+  index = 0;
  
- index = 0;
-
- mqttControlPacketSubscribe->mqttFixedHeaderRemainingLength = mqttControlPacketSubscribeBuffer[index++];
- mqttControlPacketSubscribe->mqttVariableHeaderPacketIdentifierMSB = mqttControlPacketSubscribeBuffer[index++];
- mqttControlPacketSubscribe->mqttVariableHeaderPacketIdentifierLSB = mqttControlPacketSubscribeBuffer[index++];
- mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterMSB = mqttControlPacketSubscribeBuffer[index++];
- mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterLSB = mqttControlPacketSubscribeBuffer[index++];
- mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar0 = mqttControlPacketSubscribeBuffer[index++];
- mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar1 = mqttControlPacketSubscribeBuffer[index++];
- mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar2 = mqttControlPacketSubscribeBuffer[index++];
- mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterQos = mqttControlPacketSubscribeBuffer[index];
-
- printf("%c%c%c\n",  
-  mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar0, 
-  mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar1, 
-  mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar2
- );
+  mqttControlPacketSubscribe->mqttFixedHeaderRemainingLength = mqttControlPacketSubscribeBuffer[index++];
+  mqttControlPacketSubscribe->mqttVariableHeaderPacketIdentifierMSB = mqttControlPacketSubscribeBuffer[index++];
+  mqttControlPacketSubscribe->mqttVariableHeaderPacketIdentifierLSB = mqttControlPacketSubscribeBuffer[index++];
+  mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterMSB = mqttControlPacketSubscribeBuffer[index++];
+  mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterLSB = mqttControlPacketSubscribeBuffer[index++];
+  mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar0 = mqttControlPacketSubscribeBuffer[index++];
+  mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar1 = mqttControlPacketSubscribeBuffer[index++];
+  mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar2 = mqttControlPacketSubscribeBuffer[index++];
+  mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterQos = mqttControlPacketSubscribeBuffer[index];
+ 
+  printf("%c%c%c\n",  
+   mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar0, 
+   mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar1, 
+   mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar2
+  );
  
   // QUEUE DEQUEUE
   // SPÄTER MIT SEMAPHOREN ARBEITEN
@@ -421,47 +436,56 @@ void *clientThread(void *arg) {
 
   // FIXMXE: So lange bis ein Disconnect Paket ankommt, bis die Semaphore freigegeben worden ist auf Queue
   while(1) {
-  // mqttControlPacketPublish vorbereiten und in Puffer zum Versand ablegen 
-  mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) malloc(sizeof(mqttControlPacketPublishTpl));
+   sem_wait(&semQueueFull);
+   pthread_mutex_lock(&mutex);
 
-  index = 0;
+   // mqttControlPacketPublish vorbereiten und in Puffer zum Versand ablegen (+1 weil wir hier das erste Byte vom Header wieder braucehn)
+   mqttFixedHeaderTpl *mqttFixedHeader = (mqttFixedHeaderTpl*) malloc(sizeof(mqttFixedHeaderTpl));
 
-  mqttControlPacketPublish->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
-  mqttControlPacketPublish->mqttFixedHeaderByte1Bits.mqttControlPacketType = PUBLISH;
-  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttFixedHeaderByte1;
+   // mqttControlPacketPublish vorbereiten und in Puffer zum Versand ablegen (+1 weil wir hier das erste Byte vom Header wieder braucehn)
+   mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) malloc(sizeof(mqttControlPacketPublishTpl));
 
-  mqttControlPacketPublish->mqttFixedHeaderRemainingLength = 8;
-  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttFixedHeaderRemainingLength;
-
-  mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB = 0;
-  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB;
-
-  mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = 3;
-  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB;
-
-  mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0 = 't';
-  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0;
-
-  mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1 = '0';
-  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1;
-
-  mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2 = '1';
-  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2;
-
-  mqttControlPacketPublish->mqttVariableHeaderPayloadChar0 = '+';
-  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar0;
-
-  mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = '1';
-  mqttControlPacketPublishBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1;
-
-  mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = '5';
-  mqttControlPacketPublishBuffer[index] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
-
-  // FIXME: DEQUEUE
-
-  errno = 0;
-  send(clientSocketFDTmp, &mqttControlPacketPublishBuffer, sizeof(mqttControlPacketPublishBuffer), 0);
-  if( errno != 0 ) { handle_error("send() mqttControlPacketPublishBuffer"); };
+   index = 0;
+ 
+   mqttFixedHeader->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
+   mqttFixedHeader->mqttFixedHeaderByte1Bits.mqttControlPacketType = PUBLISH;
+   mqttControlPacketPublishSendBuffer[index++] = mqttFixedHeader->mqttFixedHeaderByte1;
+   
+   mqttControlPacketPublish->mqttFixedHeaderRemainingLength = 8;
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttFixedHeaderRemainingLength;
+ 
+   mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB = 0;
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB;
+ 
+   mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = 3;
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB;
+ 
+   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0 = 't';
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0;
+ 
+   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1 = '0';
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1;
+ 
+   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2 = '1';
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2;
+ 
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar0 = '+';
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar0;
+ 
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = '1';
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1;
+ 
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = '5';
+   mqttControlPacketPublishSendBuffer[index] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
+ 
+   // FIXME: DEQUEUE
+ 
+   errno = 0;
+   send(clientSocketFDTmp, &mqttControlPacketPublishSendBuffer, sizeof(mqttControlPacketPublishSendBuffer), 0);
+   if( errno != 0 ) { handle_error("send() mqttControlPacketPublishSendBuffer"); };
+   
+   sem_post(&semQueueEmpty);
+   pthread_mutex_unlock(&mutex);
   }
   // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
   mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
