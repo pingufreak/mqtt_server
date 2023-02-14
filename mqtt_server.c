@@ -37,11 +37,11 @@ int main(int argc, char *argv) {
  int serverSocketFD, clientSocketFD;
  struct sockaddr_in serverSocketSettings, clientSocketSettings;
 
+ // Producer Consumer auf Basis von http://shivammitra.com/c/producer-consumer-problem-in-c/#
  pthread_mutex_init(&mutex, NULL);
  sem_init(&semQueueEmpty, 0, SEM_WAIT);
  sem_init(&semQueueFull, 0, 0);
 
-  
  // serverSocketFD erstellen
  errno = 0;
  serverSocketFD = socket(AF_INET, SOCK_STREAM, 0);
@@ -148,7 +148,7 @@ int main(int argc, char *argv) {
   pthread_t threadId = (pthread_t) malloc(sizeof(pthread_t));
   errno = 0;
   pthread_create( &threadId, NULL, clientThread, (void *) &clientThreadStruct);
-  if( errno != 0 ) { handle_error("close() clientSocketFD"); };
+  if( errno != 0 ) { handle_error("pthread_create()"); };
   #ifdef DEBUG 
   printf("debug: pthread_create clientSocketFD\n"); 
   #endif
@@ -240,7 +240,7 @@ void *clientThread(void *arg) {
  mqttControlPacketConnectack->mqttFixedHeaderByte1Bits.mqttControlPacketType = CONNACK;
  mqttControlPacketConnectackBuffer[index++] = mqttControlPacketConnectack->mqttFixedHeaderByte1;
 
- mqttControlPacketConnectack->mqttFixedHeaderRemainingLength = 15;
+ mqttControlPacketConnectack->mqttFixedHeaderRemainingLength = 2;
  mqttControlPacketConnectackBuffer[index++] = mqttControlPacketConnectack->mqttFixedHeaderRemainingLength;
 
  mqttControlPacketConnectack->mqttVariableHeaderConnectackFlags = 0;
@@ -316,6 +316,7 @@ void *clientThread(void *arg) {
   value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
   value[3] = '\0';
 
+  printf("enqueue(): topic: %s, value: %s\n", topic, value);
   enqueue(queue, topic, value);
 
   pthread_mutex_unlock(&mutex);
@@ -459,27 +460,28 @@ void *clientThread(void *arg) {
  
    mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = 3;
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB;
+
+   char *topic = malloc(4);
+   char *value = malloc(4);
+
+   dequeue(queue, &topic, &value);
  
-   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0 = 't';
+   printf("dequeue(): topic: %s, value: %s\n", topic, value);
+
+   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0 = topic[0];
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0;
- 
-   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1 = '0';
+   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1 = topic[1];
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1;
- 
-   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2 = '1';
+   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2 = topic[2];
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2;
  
-   mqttControlPacketPublish->mqttVariableHeaderPayloadChar0 = '+';
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar0 = value[0];
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar0;
- 
-   mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = '1';
-   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1;
- 
-   mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = '5';
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = value[1];
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1; 
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = value[2];  
    mqttControlPacketPublishSendBuffer[index] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
- 
-   // FIXME: DEQUEUE
- 
+  
    errno = 0;
    send(clientSocketFDTmp, &mqttControlPacketPublishSendBuffer, sizeof(mqttControlPacketPublishSendBuffer), 0);
    if( errno != 0 ) { handle_error("send() mqttControlPacketPublishSendBuffer"); };
@@ -490,28 +492,11 @@ void *clientThread(void *arg) {
   // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
   mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
  }
- /*
- if( errno != 0 ) { handle_error("send() mqttControlPacketSubackBuffer"); };
- switch(mqttControlPacketSubackBuffer[4]) {
-  case 128:
-   errno=1;
-   if( errno != 0 ) { handle_error("recv() mqttControlPacketSuback failed"); }; 
-  break;
-  case 2:
-   errno=1;
-   if( errno != 0 ) { handle_error("recv() mqttControlPacketSuback QoS 2 is not supported"); }; 
-  break;
-  case 1:
-   errno=1;
-   if( errno != 0 ) { handle_error("recv() mqttControlPacketSuback QoS 1 is not supported"); }; 
-  break;
- }
- */
 }
 
 bool mqttControlPacketConnectCheckMQTT(char mqttVariableHeaderProtocolNameChar0, char mqttVariableHeaderProtocolNameChar1, char mqttVariableHeaderProtocolNameChar2, char mqttVariableHeaderProtocolNameChar3) {
-   if(mqttVariableHeaderProtocolNameChar0 != 'M' || mqttVariableHeaderProtocolNameChar1 != 'Q' || mqttVariableHeaderProtocolNameChar2 != 'T' || mqttVariableHeaderProtocolNameChar3 != 'T') {
-    return false;
-   }
-   return true; 
+ if(mqttVariableHeaderProtocolNameChar0 != 'M' || mqttVariableHeaderProtocolNameChar1 != 'Q' || mqttVariableHeaderProtocolNameChar2 != 'T' || mqttVariableHeaderProtocolNameChar3 != 'T') {
+  return false;
+ }
+ return true; 
 }
