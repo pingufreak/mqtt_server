@@ -435,8 +435,13 @@ void *clientThread(void *arg) {
    send() PUBLISH von dequeue
   */
 
+   char *topic = malloc(4);
+   char *value = malloc(4);
+
   // FIXMXE: So lange bis ein Disconnect Paket ankommt, bis die Semaphore freigegeben worden ist auf Queue
   while(1) {
+   if(getElementCount(queue) > 0) {
+
    sem_wait(&semQueueFull);
    pthread_mutex_lock(&mutex);
 
@@ -463,9 +468,10 @@ void *clientThread(void *arg) {
 
    char *topic = malloc(4);
    char *value = malloc(4);
+ 
 
    dequeue(queue, &topic, &value);
- 
+   
    printf("dequeue(): topic: %s, value: %s\n", topic, value);
 
    mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0 = topic[0];
@@ -491,6 +497,8 @@ void *clientThread(void *arg) {
   }
   // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
   mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
+  }
+
  }
 }
 

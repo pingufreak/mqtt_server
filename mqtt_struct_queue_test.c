@@ -11,9 +11,11 @@ void main() {
     
     enqueue(queue, s1, s2);
 
-printf("%p %p\n", s1, s3);
+    printf("%p %p\n", s1, s3);
+    
     dequeue(queue, &s3, &s4);
-printf("%p %p\n", s1, s3);
+    
+    printf("%p %p\n", s1, s3);
 
     printf("%s %s\n", s1, s2);
 
