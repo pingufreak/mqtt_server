@@ -9,13 +9,20 @@ void main() {
     char *s3 = "stringa";
     char *s4 = "stringb";
     
+    printf("eq b %d\n", getElementCount(queue));
     enqueue(queue, s1, s2);
+    printf("eq a %d\n", getElementCount(queue));
 
-printf("%p %p\n", s1, s3);
+    printf("dq b %d\n", getElementCount(queue));
     dequeue(queue, &s3, &s4);
-printf("%p %p\n", s1, s3);
+    printf("dq a %d\n", getElementCount(queue));
 
-    printf("%s %s\n", s1, s2);
+    printf("eq b %d\n", getElementCount(queue));
+    enqueue(queue, s1, s2);
+    printf("eq a %d\n", getElementCount(queue));
 
-    printf("%s %s\n", s3, s4);
+    printf("dq b %d\n", getElementCount(queue));
+    dequeue(queue, &s3, &s4);
+    printf("dq a %d\n", getElementCount(queue));
+
 }
