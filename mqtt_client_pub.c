@@ -70,7 +70,7 @@ int main(int argc, char *argv[]) {
  mqttControlPacketConnect->mqttVariableHeaderKeepAliveLSB = 0;
  mqttControlPacketConnectBuffer[index++] = mqttControlPacketConnect->mqttVariableHeaderKeepAliveLSB;
 
- mqttControlPacketConnect->mqttVariableHeaderKeepAliveMSB = 0;
+ mqttControlPacketConnect->mqttVariableHeaderKeepAliveMSB = 60;
  mqttControlPacketConnectBuffer[index++] = mqttControlPacketConnect->mqttVariableHeaderKeepAliveMSB;
 
  mqttControlPacketConnect->clientIdMSB = 0;

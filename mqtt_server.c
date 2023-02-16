@@ -25,6 +25,12 @@ const uint8_t  SEM_WAIT = 10;
 
 void *clientThread(void*);
 
+int checkMqttControlPacketConnect(mqttControlPacketConnectTpl *mqttControlPacketConnect);
+
+int checkMqttControlPacketPublish(mqttControlPacketPublishTpl *mqttControlPacketPublish);
+
+int checkMqttControlPacketDisconnect(mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect);
+
 typedef struct clientThreadStructTpl {
   int clientSocketFD;
   Queue *queue;
@@ -186,24 +192,41 @@ int main(int argc, char *argv) {
 }
 
 void *clientThread(void *arg) {  
+ // ###################### 
+ // ### Vordefiniertes ###  
+ // ###################### 
+
+ // Struktur für den ClientThread wird als Argument übergeben
  clientThreadStructTpl *clientThreadStruct = (clientThreadStructTpl *) arg;
+
+ // In der Struktur befindet sich der Client-Socket
  int clientSocketFDTmp = clientThreadStruct->clientSocketFD;
+
+ // In der Queue werden:
+ // - eingehende PUBLISH-Nachrichten (Publisher) abgelegt
+ // - ausgehende PUBLISH-Nachrichten (Subscriber) entfernt
  Queue *queue = clientThreadStruct->queue;
 
+ // Der Index dient zum Inkrementieren der Puffer-Elemente
  int index = 0;
 
+ // Dynamische Längen sind in unserem Anwendungsfall nicht notwendig, daher werden die Puffer-Längen statisch definiert
  uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[9], mqttControlPacketPublishSendBuffer[10], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2];
-
- /*
-   recv() CONNECT
- */
-
+ 
+ // ###################### 
+ // ### recv() CONNECT ###  
+ // ###################### 
+ 
+ // Erstes Paket, üblicherweise CONNECT, mit recv() in Puffer lesen. Fehler abfangen.
+ #ifdef DEBUG 
+ printf("debug: recv(): mqttControlPacketConnectBuffer\n");
+ #endif
  errno = 0;
  recv(clientSocketFDTmp, &mqttControlPacketConnectBuffer, sizeof(mqttControlPacketConnectBuffer), 0);
  if( errno != 0 ) { handle_error("send() mqttControlPacketConnectBuffer"); };
 
- mqttControlPacketConnectTpl *mqttControlPacketConnect = (mqttControlPacketConnectTpl*) malloc(sizeof(mqttControlPacketConnectTpl));
- 
+ // Speicher für die MQTT-Connect Struktur reservieren und den Puffer dort abspeichern.
+ mqttControlPacketConnectTpl *mqttControlPacketConnect = (mqttControlPacketConnectTpl*) malloc(sizeof(mqttControlPacketConnectTpl)); 
  mqttControlPacketConnect->mqttFixedHeaderByte1 = mqttControlPacketConnectBuffer[index++];
  mqttControlPacketConnect->mqttFixedHeaderRemainingLength = mqttControlPacketConnectBuffer[index++];
  mqttControlPacketConnect->mqttVariableHeaderProtocolNameMSB = mqttControlPacketConnectBuffer[index++];
@@ -222,81 +245,88 @@ void *clientThread(void *arg) {
  mqttControlPacketConnect->clientIdChar1 = mqttControlPacketConnectBuffer[index++];
  mqttControlPacketConnect->clientIdChar2 = mqttControlPacketConnectBuffer[index];
 
- #ifdef DEBUG 
- printf("debug: recv(): mqttControlPacketConnectBuffer\n");
- #endif
+ // Mit der Struktur können die Daten einfach zerlegt und geprüft werden. Dies geschieht 
+ // in der Funktion checkMqttControlPacketConnect(). Schlägt diese Prüfung fehl, wird hier
+ // schon die Verbindung beendet und Speicher wieder freigegeben.
+ if(checkMqttControlPacketConnect(mqttControlPacketConnect) != 0) {
+  close(clientSocketFDTmp);
+  free(mqttControlPacketConnect);
+  #ifdef DEBUG 
+  printf("debug: checkMqttControlPacketConnect(): nicht konform.\n");
+  #endif
+  return NULL;
+ }
 
- // FIXME: CONNECT AUSWERTEN, FEWHLERHANDLING!!!
-
+ // Ist die Prüfung der MQTT Connect Struktur in Ordnung, muss nur noch der Speicher dieser Struktur 
+ // freigegeben werden. Der Index kann für das nächste Paket auch wieder zurückgesetzt werden.
  free(mqttControlPacketConnect);
-
-/*
-   send() CONNACK
- */
- 
- mqttControlPacketConnectackTpl *mqttControlPacketConnectack = (mqttControlPacketConnectackTpl*) malloc(sizeof(mqttControlPacketConnectackTpl));
-
  index = 0;
 
+ // ###################### 
+ // ### send() CONNACK ###  
+ // ###################### 
+
+ // Speicher für die MQTT-Connectack Struktur reservieren, definieren und die Daten dem Puffer zum Versenden zuweisen.
+ mqttControlPacketConnectackTpl *mqttControlPacketConnectack = (mqttControlPacketConnectackTpl*) malloc(sizeof(mqttControlPacketConnectackTpl));
  mqttControlPacketConnectack->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
  mqttControlPacketConnectack->mqttFixedHeaderByte1Bits.mqttControlPacketType = CONNACK;
  mqttControlPacketConnectackBuffer[index++] = mqttControlPacketConnectack->mqttFixedHeaderByte1;
-
  mqttControlPacketConnectack->mqttFixedHeaderRemainingLength = 2;
  mqttControlPacketConnectackBuffer[index++] = mqttControlPacketConnectack->mqttFixedHeaderRemainingLength;
-
  mqttControlPacketConnectack->mqttVariableHeaderConnectackFlags = 0;
  mqttControlPacketConnectBuffer[index++] = mqttControlPacketConnectack->mqttVariableHeaderConnectackFlags;
-
  mqttControlPacketConnectack->mqttVariableHeaderConnectackReturncode = 0;
  mqttControlPacketConnectBuffer[index++] = mqttControlPacketConnectack->mqttVariableHeaderConnectackReturncode;
 
+ // Mit dem Versand des CONNACK Paket wird das konforme CONNECT Paket bestätigt. Fehler abfangen.
+ #ifdef DEBUG 
+ printf("debug: send(): mqttControlPacketConnectackBuffer\n");
+ #endif
  errno = 0;
  send(clientSocketFDTmp, &mqttControlPacketConnectackBuffer, sizeof(mqttControlPacketConnectackBuffer), 0);
  if( errno != 0 ) { handle_error("send() mqttControlPacketConnectackBuffer"); };
 
- #ifdef DEBUG 
- printf("debug: send(): mqttControlPacketConnectackBuffer\n");
- #endif
-
+ // Nach dem Versenden vom CONNACK Paket, den Speicher wieder freigeben.
  free(mqttControlPacketConnectack);
+ index = 0;
 
+ // ###################### 
+ // ### recv() FIXEDHD ###  
+ // ###################### 
+
+ // Es wird nur das erste Byte vom nächsten Paket gelesen. In dem Byte wird dann unterschieden, ob es sich um 
+ // ein PUBLISHer-Client oder SUBSCRIBEr-Client handelt. Andere Paket-Typen werden abgelehnt. 
+ #ifdef DEBUG 
+ printf("debug: recv(): mqttFixedHeaderBuffer\n");
+ #endif
  errno = 0;
  recv(clientSocketFDTmp, &mqttFixedHeaderBuffer, sizeof(mqttFixedHeaderBuffer), 0);
  if( errno != 0 ) { handle_error("receive() mqttFixedHeaderBuffer"); };
 
- #ifdef DEBUG 
- printf("debug: recv(): mqttFixedHeaderBuffer\n");
- #endif
-
+ // Erstes Byte vom FixedHeader lesen
  mqttFixedHeaderTpl mqttFixedHeader;
  mqttFixedHeader.mqttFixedHeaderByte1 = mqttFixedHeaderBuffer[0];
 
+ // Da PUBLISHer- und SUBSCRIBEr-Client den Topic und Value benötigen, wird bereits hier Speicher reserviert.
  char *topic = malloc(4);
  char *value = malloc(4);
 
+ // Prüfen ob es sich um ein PUBLISHer-Client handelt
  if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == PUBLISH) {
-  /*
-   recv() PUBLISH
-  */
-
-  #ifdef DEBUG 
-  printf("debug: recv(): mqttFixedHeaderBuffer -> PUBLISH received\n");
-  #endif
+  // ###################### 
+  // ### recv() PUBLISH ###  
+  // ###################### 
  
-  errno = 0;
-  recv(clientSocketFDTmp, &mqttControlPacketPublishBuffer, sizeof(mqttControlPacketPublishBuffer), 0);
-  if( errno != 0 ) { handle_error("receive() mqttControlPacketPublishBuffer"); };
-  
+  // Die restlichen Bytes der PUBLISH-Nachricht werden in den Puffer gelesen. 
   #ifdef DEBUG 
   printf("debug: recv(): mqttControlPacketPublishBuffer\n");
   #endif
-
-  // mqttControlPacketPublish vorbereiten und in Puffer zum Versand ablegen 
-  mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) malloc(sizeof(mqttControlPacketPublishTpl));
+  errno = 0;
+  recv(clientSocketFDTmp, &mqttControlPacketPublishBuffer, sizeof(mqttControlPacketPublishBuffer), 0);
+  if( errno != 0 ) { handle_error("receive() mqttControlPacketPublishBuffer"); };
  
-  index = 0;
-
+  // Speicher für die MQTT-Publish Struktur reservieren und den Puffer dort abspeichern.
+  mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) malloc(sizeof(mqttControlPacketPublishTpl));
   mqttControlPacketPublish->mqttFixedHeaderRemainingLength = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = mqttControlPacketPublishBuffer[index++];
@@ -307,71 +337,57 @@ void *clientThread(void *arg) {
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = mqttControlPacketPublishBuffer[index];
 
+  // Mit der Struktur können die Daten einfach zerlegt und geprüft werden. Dies geschieht 
+  // in der Funktion checkMqttControlPacketPublish(). Schlägt diese Prüfung fehl, wird hier
+  // schon die Verbindung beendet und Speicher wieder freigegeben.
+  if(checkMqttControlPacketPublish(mqttControlPacketPublish) != 0) {
+   close(clientSocketFDTmp);
+   free(mqttControlPacketPublish);
+   #ifdef DEBUG 
+   printf("debug: checkMqttControlPacketPublish(): nicht konform.\n");
+   #endif
+   return NULL;
+  }
+
+  // Semaphore und gegenseitiger Ausschluss. Die Nachricht wird erst in die Queue geschrieben, wenn
+  // weniger als SEM_WAIT (Default: 10) Elemente belegt sind. Dadurch werden Speicherüberläufe
+  // vermieden.
   sem_wait(&semQueueEmpty);
   pthread_mutex_lock(&mutex);
 
+  // Für den Topic werden statisch 3 Zeichen verwendet und mit \0 terminiert. Dadurch, dass statische
+  // Längen verwendet werden, ist die Implementierung einfacher und die Laufzeit schneller, da der 
+  // in der Spezifikation angebene Algorithmus zum Berechnen der Längen nicht verwendet wird.
   topic[0] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0; 
   topic[1] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar1; 
   topic[2] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2;
   topic[3] = '\0';
 
+  // Analog zu dem Topic gilt das Gleiche für den Value.
   value[0] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar0; 
   value[1] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1; 
   value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
   value[3] = '\0';
-
+ 
+  // Der Topic und Value werden in einem neuen Element in der Queue gespeichert. Es gilt FIFO.
+  #ifdef DEBUG 
   printf("debug: enqueue(): topic: %s, value: %s\n", topic, value);
+  #endif
   enqueue(queue, topic, value);
 
-  printf("%d\n", getElementCount(queue));
-
+  // Nachdem die Daten in der Queue abgelegt worden sind, werden Mutex und Semaphore wieder freigegeben.
   pthread_mutex_unlock(&mutex);
   sem_post(&semQueueFull);
 
+  // Nach dem Verarbeiten vom eingheneden PUBLISH Paket, kann der Speicher wieder fregegeben werden.
   free(mqttControlPacketPublish);
-
-  // FIXME: CONNECT AUSWERTEN!!!
-  /*
-   for(int i = 0; i <sizeof(mqttControlPacketPublishBuffer); i++) {
-    printf("%d %d\n", i, mqttControlPacketPublishBuffer[i]);
-   }
-  */
-  /*
-    recv() DISCONNECT
-  */
-
-  errno = 0;
-  recv(clientSocketFDTmp, &mqttControlPacketDisconnectBuffer, sizeof(mqttControlPacketDisconnectBuffer), 0);
-  if( errno != 0 ) { handle_error("receive() mqttControlPacketDisconnectBuffer"); };
-
-  #ifdef DEBUG 
-  printf("debug: recv(): mqttControlPacketDisconnectBuffer\n");
-  #endif
-
-  // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
-  mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
- 
   index = 0;
-
-  mqttControlPacketDisconnect->mqttFixedHeaderByte1 = mqttControlPacketDisconnectBuffer[index++];
-  mqttControlPacketDisconnect->mqttFixedHeaderRemainingLength = mqttControlPacketDisconnectBuffer[index++];
-
-  // FIXME: DISCONNECT AUSWERTEN!!!
-
-  free(mqttControlPacketDisconnect);
-
-  /*
-  for(int i = 0; i <sizeof(mqttControlPacketDisconnectBuffer); i++) {
-   printf("%d %d\n", i, mqttControlPacketDisconnectBuffer[i]);
-  }
- 
-  */
  }
-
- if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == SUBSCRIBE) {
-  /*
-   recv() SUBSCRIBE
-  */
+ // Prüfen ob es sich um ein SUBSCRIBer-Client handelt
+ else if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == SUBSCRIBE) {
+  // ######################## 
+  // ### recv() SUBSCRIBE ###  
+  // ######################## 
 
   #ifdef DEBUG 
   printf("debug: recv(): mqttFixedHeaderBuffer -> SUBSCRIBE received\n");
@@ -446,8 +462,6 @@ void *clientThread(void *arg) {
 
   // FIXMXE: So lange bis ein Disconnect Paket ankommt, bis die Semaphore freigegeben worden ist auf Queue
   while(1) {
-   printf("%d\n", getElementCount(queue));
-
    sem_wait(&semQueueFull);
    pthread_mutex_lock(&mutex);
 
@@ -501,29 +515,160 @@ void *clientThread(void *arg) {
 
    pthread_mutex_unlock(&mutex);
    sem_post(&semQueueEmpty);
-
-  // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
-  mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
   }
+ } 
+ else {
+  #ifdef DEBUG 
+  printf("debug: close() ungültiger Paket-Typ.\n");
+  #endif
+  close(clientSocketFDTmp);
  }
+
+ // ######################### 
+ // ### recv() DISCONNECT ###  
+ // #########################
+ 
+ // Zum Schluss wird die DISCONNECT-Nachricht gelesen, geprüft und die Verbindung terminiert.
+ #ifdef DEBUG 
+ printf("debug: recv(): mqttControlPacketDisconnectBuffer\n");
+ #endif
+ errno = 0;
+ recv(clientSocketFDTmp, &mqttControlPacketDisconnectBuffer, sizeof(mqttControlPacketDisconnectBuffer), 0);
+ if( errno != 0 ) { handle_error("receive() mqttControlPacketDisconnectBuffer"); };
+
+ // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
+ mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
+ mqttControlPacketDisconnect->mqttFixedHeaderByte1 = mqttControlPacketDisconnectBuffer[index++];
+ mqttControlPacketDisconnect->mqttFixedHeaderRemainingLength = mqttControlPacketDisconnectBuffer[index++];
+ 
+ // Mit der Struktur können die Daten einfach zerlegt und geprüft werden. Dies geschieht 
+ // in der Funktion checkMqttControlPacketDisconnect(). Schlägt diese Prüfung fehl, wird 
+ // das Paket ignoriert und die Verbindung trotzdem terminiert.
+ if(checkMqttControlPacketDisconnect(mqttControlPacketDisconnect) != 0) {
+  close(clientSocketFDTmp);
+  free(mqttControlPacketDisconnect);
+  #ifdef DEBUG 
+  printf("debug: checkMqttControlPacketDisconnect(): nicht konform.\n");
+  #endif
+  return NULL;
+ }
+
+ free(mqttControlPacketDisconnect);
 
 /* 
  free(value);
  free(topic);
 */
-
- #ifdef DEBUG 
- printf("debug: close(): clientThreadStruct->clientSocketFD\n");
- #endif
-
- errno = 0;
- close(clientThreadStruct->clientSocketFD);
- if( errno != 0 ) { handle_error("close(clientThreadStruct->clientSocketFD)"); };  
 }
 
-bool mqttControlPacketConnectCheckMQTT(char mqttVariableHeaderProtocolNameChar0, char mqttVariableHeaderProtocolNameChar1, char mqttVariableHeaderProtocolNameChar2, char mqttVariableHeaderProtocolNameChar3) {
- if(mqttVariableHeaderProtocolNameChar0 != 'M' || mqttVariableHeaderProtocolNameChar1 != 'Q' || mqttVariableHeaderProtocolNameChar2 != 'T' || mqttVariableHeaderProtocolNameChar3 != 'T') {
-  return false;
+int checkMqttControlPacketConnect(mqttControlPacketConnectTpl *mqttControlPacketConnect) {
+ if(mqttControlPacketConnect->mqttFixedHeaderByte1Bits.mqttControlPacketType != CONNECT) {
+  printf("%d != CONNECT(1). Beende Verbindung.\n", mqttControlPacketConnect->mqttFixedHeaderByte1Bits.mqttControlPacketType);
+  return 1;
  }
- return true; 
+
+ if(mqttControlPacketConnect->mqttFixedHeaderRemainingLength != 15) {
+  printf("Die Paketlänge stimmt nicht, es wird eine RemainingLength von 15 erwarte.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderProtocolNameMSB != 0) {
+  printf("mqttVariableHeaderProtocolNameLSB muss 0 sein.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderProtocolNameLSB != 4) {
+  printf("mqttVariableHeaderProtocolNameMSB muss 4 sein.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderProtocolNameChar0 != 'M' || mqttControlPacketConnect->mqttVariableHeaderProtocolNameChar1 != 'Q' || mqttControlPacketConnect->mqttVariableHeaderProtocolNameChar2 != 'T' || mqttControlPacketConnect->mqttVariableHeaderProtocolNameChar3 != 'T' ) {
+  printf("mqttVariableHeaderTopicNameChar0-3 muss MQTT beinhalten.\n");  
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderProtocolLevel != 4) {
+  printf("mqttVariableHeaderProtocolLevel muss 4 sein, es wird nur MQTT 3.1.1 unterstützt\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderConnectFlagsBits.mqttVariableHeaderConnectFlagsReserved != 0) {
+  printf("mqttVariableHeaderConnectFlagsReserved muss 0 sein, ist reserviert.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderConnectFlagsBits.mqttVariableHeaderConnectFlagsCleanSession != 1) {
+  printf("mqttVariableHeaderConnectFlagsCleanSession muss 1 sein, wir verwenden kein QoS 1 oder QoS 2. Für QoS 0 ist das Speichern optional.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderConnectFlagsBits.mqttVariableHeaderConnectFlagsWillFlag != 0) {
+  printf("mqttVariableHeaderConnectFlagsWillFlag muss 0 sein, wir verwenden kein Will QoS / Retain.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderConnectFlagsBits.mqttVariableHeaderConnectFlagsWillQoS != 0) {
+  printf("mqttVariableHeaderConnectFlagsWillQoS muss 0 sein, wir verwenden kein Will QoS / Retain.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderConnectFlagsBits.mqttVariableHeaderConnectFlagsWillRetain != 0) {
+  printf("mqttVariableHeaderConnectFlagsWillRetain muss 0 sein, wir verwenden kein Will QoS / Retain.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderConnectFlagsBits.mqttVariableHeaderConnectFlagsPassword != 0) {
+  printf("mqttVariableHeaderConnectFlagsPassword muss 0 sein, wir verwenden keine Authentifizierung, rein internes Netz.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderConnectFlagsBits.mqttVariableHeaderConnectFlagsUsername != 0) {
+  printf("mqttVariableHeaderConnectFlagsUsername muss 0 sein, wir verwenden keine Authentifizierung, rein internes Netz.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderKeepAliveLSB != 0) {
+  printf("mqttVariableHeaderKeepAliveLSB != 0, telegraf mqtt_consumer unterstützt kein keepalive von 0 wegen paho.mqtt.golang.\n");
+  return 1;
+ }
+
+ if(mqttControlPacketConnect->mqttVariableHeaderKeepAliveMSB != 60) {
+  printf("mqttVariableHeaderKeepAliveMSB != 60, telegraf mqtt_consumer unterstützt kein keepalive von 0 wegen paho.mqtt.golang.\n");
+  return 1;
+ }
+
+ return 0;
+}
+
+int checkMqttControlPacketPublish(mqttControlPacketPublishTpl *mqttControlPacketPublish) {
+ if(mqttControlPacketPublish->mqttFixedHeaderRemainingLength != 8) {
+  printf("mqttFixedHeaderRemainingLength != 8, aus Performance-Gründen nur eine statische Länge\n");
+  return 1;
+ }
+
+ if(mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB != 0) {
+  printf("mqttVariableHeaderTopicNameLSB != 0, aus Performance-Gründen nur eine statische Länge\n");
+  return 1;
+ }
+
+ if(mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB != 3) {
+  printf("mqttVariableHeaderTopicNameMSB != 0, aus Performance-Gründen nur eine statische Länge\n");
+  return 1;
+ }
+ 
+ return 0;
+}
+
+int checkMqttControlPacketDisconnect(mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect) { 
+ if(mqttControlPacketDisconnect->mqttFixedHeaderByte1 != 224) {
+  printf("mqttFixedHeaderByte1 != 224, ungültiger Disconnect Header\n");
+  return 1;
+ }
+
+ if(mqttControlPacketDisconnect->mqttFixedHeaderRemainingLength != 0) {
+  printf("mqttFixedHeaderRemainingLength != 0, muss 0 sein bei Disconnect.\n");
+  return 1;
+ }
+
+ return 0;
 }
