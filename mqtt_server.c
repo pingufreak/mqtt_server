@@ -556,6 +556,7 @@ void *clientThread(void *arg) {
   #ifdef DEBUG 
   printf("debug: pthread_create clientSocketFD\n"); 
   #endif
+*/
 
   errno = 0;
   recv(clientSocketFDTmp, &mqttControlPacketSubscribeBuffer, sizeof(mqttControlPacketSubscribeBuffer), 0);
@@ -563,7 +564,7 @@ void *clientThread(void *arg) {
 
   // mqttControlPacketSubscribe vorbereiten und in Puffer zum Versand ablegen 
   mqttControlPacketSubscribeTpl *mqttControlPacketSubscribe = (mqttControlPacketSubscribeTpl*) malloc(sizeof(mqttControlPacketSubscribeTpl));
-*/  
+  
   index = 0;
  
   mqttControlPacketSubscribe->mqttFixedHeaderRemainingLength = mqttControlPacketSubscribeBuffer[index++];
