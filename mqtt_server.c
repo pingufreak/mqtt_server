@@ -544,6 +544,7 @@ void *clientThread(void *arg) {
   printf("debug: recv(): mqttControlPacketSubscribeBuffer\n");
   #endif
 
+/*
   // PINGRESP Thread starten
   subscriberRequestThreadStructTpl subscriberRequestThreadStruct;
   subscriberRequestThreadStruct.clientSocketFD = clientSocketFDTmp;
@@ -562,7 +563,7 @@ void *clientThread(void *arg) {
 
   // mqttControlPacketSubscribe vorbereiten und in Puffer zum Versand ablegen 
   mqttControlPacketSubscribeTpl *mqttControlPacketSubscribe = (mqttControlPacketSubscribeTpl*) malloc(sizeof(mqttControlPacketSubscribeTpl));
-  
+*/  
   index = 0;
  
   mqttControlPacketSubscribe->mqttFixedHeaderRemainingLength = mqttControlPacketSubscribeBuffer[index++];
