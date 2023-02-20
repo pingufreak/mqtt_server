@@ -29,6 +29,8 @@ const uint8_t  SEM_WAIT = 10;
 
 void *clientThread(void*);
 
+void *subscriberRequestThread(void*);
+
 int checkMqttControlPacketConnect(mqttControlPacketConnectTpl *mqttControlPacketConnect);
 
 int checkMqttControlPacketPublish(mqttControlPacketPublishTpl *mqttControlPacketPublish);
@@ -39,6 +41,10 @@ typedef struct clientThreadStructTpl {
   int clientSocketFD;
   Queue *queue;
 } clientThreadStructTpl;
+
+typedef struct subscriberRequestThreadStructTpl {
+  int clientSocketFD;
+} subscriberRequestThreadStructTpl;
 
 sem_t semQueueFull, semQueueEmpty;
 pthread_mutex_t mutex;
@@ -251,6 +257,76 @@ int main(int argc, char *argv) {
  return EXIT_SUCCESS;
 }
 
+void *subscriberRequestThread(void *arg) {
+ signal(SIGPIPE, SIG_IGN);
+
+ // ###################### 
+ // ### Vordefiniertes ###  
+ // ###################### 
+
+ // Struktur für den subscriberRequestThreadStruct wird als Argument übergeben
+ subscriberRequestThreadStructTpl *subscriberRequestThreadStruct = (subscriberRequestThreadStructTpl *) arg;
+
+ // In der Struktur befindet sich der Client-Socket
+ int clientSocketFDTmp = subscriberRequestThreadStruct->clientSocketFD;
+
+ // Dynamische Längen sind in unserem Anwendungsfall nicht notwendig, daher werden die Puffer-Längen statisch definiert
+ uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketPingreqBuffer[0], mqttControlPacketPingrespBuffer[2];
+ 
+ while(1) {
+  // ###################### 
+  // ### recv() FIXEDHD ###  
+  // ###################### 
+
+  // Es wird nur das erste Byte vom nächsten Paket gelesen. In dem Byte wird dann unterschieden, ob es sich um 
+  // ein PINGREQ- oder DISCONNECT-Paket handelt. Andere Paket-Typen werden abgelehnt. 
+  #ifdef DEBUG 
+  printf("debug: recv(): mqttFixedHeaderBuffer\n");
+  #endif
+  errno = 0;
+  recv(clientSocketFDTmp, &mqttFixedHeaderBuffer, sizeof(mqttFixedHeaderBuffer), 0);
+  if( errno != 0 ) { handle_error("receive() mqttFixedHeaderBuffer"); };
+
+  // Erstes Byte vom FixedHeader lesen
+  mqttFixedHeaderTpl mqttFixedHeader;
+  mqttFixedHeader.mqttFixedHeaderByte1 = mqttFixedHeaderBuffer[0];
+
+  // Prüfen ob es sich um ein PINGREQ-Paket handelt
+  if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == PINGREQ) {
+   // Restliche Daten vom PINGREQ, mit recv() in Puffer lesen. Fehler abfangen.
+   #ifdef DEBUG 
+   printf("debug: recv(): mqttControlPacketPingreqBuffer\n");
+   #endif
+   errno = 0;
+   recv(clientSocketFDTmp, &mqttControlPacketPingreqBuffer, sizeof(mqttControlPacketPingreqBuffer), 0);
+   if( errno != 0 ) { handle_error("recv() mqttControlPacketPingreqBuffer"); };
+
+   // Speicher für die MQTT-Pingreq Struktur reservieren und den Puffer dort abspeichern.
+   mqttControlPacketPingreqTpl *mqttControlPacketPingreq = (mqttControlPacketPingreqTpl*) malloc(sizeof(mqttControlPacketPingreqTpl)); 
+   mqttControlPacketPingreq->mqttFixedHeaderByte1 = mqttFixedHeader.mqttFixedHeaderByte1;
+   mqttControlPacketPingreq->mqttFixedHeaderRemainingLength = mqttControlPacketPingreqBuffer[0];
+   
+   // mqttControlPacketResp vorbereiten und in Puffer zum Versand ablegen
+   // PINGRESP ist notwendig für Telegraf: 2023-02-20T19:53:29Z E! [inputs.mqtt_consumer] Error in plugin: connection lost: pingresp not received, disconnecting
+   // FIXME PINGRESP muss in einem weiteren Thread gestartet werden. Bestenfalls für die Subscriber einen Publish- und einen Pingresp-Thread. 
+   mqttControlPacketPingrespTpl *mqttControlPacketPingresp = (mqttControlPacketPingrespTpl*) malloc(sizeof(mqttControlPacketPingrespTpl));
+
+   int index = 0;
+ 
+   mqttControlPacketPingresp->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
+   mqttControlPacketPingresp->mqttFixedHeaderByte1Bits.mqttControlPacketType = PINGRESP;
+   mqttControlPacketPingrespBuffer[index++] = mqttControlPacketPingresp->mqttFixedHeaderByte1;
+   
+   mqttControlPacketPingresp->mqttFixedHeaderRemainingLength = 0;
+   mqttControlPacketPingrespBuffer[index++] = mqttControlPacketPingresp->mqttFixedHeaderRemainingLength;
+
+   send(clientSocketFDTmp, &mqttControlPacketPingrespBuffer, sizeof(mqttControlPacketPingrespBuffer), 0);
+
+   free(mqttControlPacketPingresp);
+  }
+ }
+}
+
 void *clientThread(void *arg) {
  signal(SIGPIPE, SIG_IGN);
  // ###################### 
@@ -272,7 +348,7 @@ void *clientThread(void *arg) {
  int index = 0;
 
  // Dynamische Längen sind in unserem Anwendungsfall nicht notwendig, daher werden die Puffer-Längen statisch definiert
- uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[13], mqttControlPacketPublishSendBuffer[14], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2], mqttControlPacketPingrespBuffer[2];
+ uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[13], mqttControlPacketPublishSendBuffer[14], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2];
  
  // ###################### 
  // ### recv() CONNECT ###  
@@ -466,6 +542,18 @@ void *clientThread(void *arg) {
   printf("debug: recv(): mqttControlPacketSubscribeBuffer\n");
   #endif
 
+  // PINGRESP Thread starten
+  subscriberRequestThreadStructTpl subscriberRequestThreadStruct;
+  subscriberRequestThreadStruct.clientSocketFD = clientSocketFDTmp;
+
+  pthread_t threadId = (pthread_t) malloc(sizeof(pthread_t));
+  errno = 0;
+  pthread_create( &threadId, NULL, subscriberRequestThread, (void *) &subscriberRequestThreadStruct);
+  if( errno != 0 ) { handle_error("pthread_create()"); };
+  #ifdef DEBUG 
+  printf("debug: pthread_create clientSocketFD\n"); 
+  #endif
+
   errno = 0;
   recv(clientSocketFDTmp, &mqttControlPacketSubscribeBuffer, sizeof(mqttControlPacketSubscribeBuffer), 0);
   if( errno != 0 ) { handle_error("receive() mqttControlPacketSubscribeBuffer"); };
@@ -593,25 +681,6 @@ void *clientThread(void *arg) {
    sem_post(&semQueueEmpty);
   }
  } 
- else if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == PINGREQ) {
-  // mqttControlPacketResp vorbereiten und in Puffer zum Versand ablegen
-  // PINGRESP ist notwendig für Telegraf: 2023-02-20T19:53:29Z E! [inputs.mqtt_consumer] Error in plugin: connection lost: pingresp not received, disconnecting
-  // FIXME PINGRESP muss in einem weiteren Thread gestartet werden. Bestenfalls für die Subscriber einen Publish- und einen Pingresp-Thread. 
-  mqttControlPacketPingrespTpl *mqttControlPacketPingresp = (mqttControlPacketPingrespTpl*) malloc(sizeof(mqttControlPacketPingrespTpl));
-
-  index = 0;
- 
-  mqttControlPacketPingresp->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
-  mqttControlPacketPingresp->mqttFixedHeaderByte1Bits.mqttControlPacketType = PINGRESP;
-  mqttControlPacketPingrespBuffer[index++] = mqttControlPacketPingresp->mqttFixedHeaderByte1;
-   
-  mqttControlPacketPingresp->mqttFixedHeaderRemainingLength = 0;
-  mqttControlPacketPingrespBuffer[index++] = mqttControlPacketPingresp->mqttFixedHeaderRemainingLength;
-
-  send(clientSocketFDTmp, &mqttControlPacketPingrespBuffer, sizeof(mqttControlPacketPingrespBuffer), 0);
-
-  free(mqttControlPacketPingresp);
- }
  else {
   #ifdef DEBUG 
   printf("debug: close() ungültiger Paket-Typ.\n");

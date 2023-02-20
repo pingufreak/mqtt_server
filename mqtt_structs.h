@@ -188,4 +188,15 @@ typedef struct {
   } mqttFixedHeaderByte1Bits;
  };
  uint8_t mqttFixedHeaderRemainingLength; 
+} mqttControlPacketPingreqTpl; 
+
+typedef struct {
+ union {
+  uint8_t mqttFixedHeaderByte1;
+  struct {
+   unsigned mqttControlPacketFlags : 4;
+   unsigned mqttControlPacketType : 4;
+  } mqttFixedHeaderByte1Bits;
+ };
+ uint8_t mqttFixedHeaderRemainingLength; 
 } mqttControlPacketPingrespTpl; 
