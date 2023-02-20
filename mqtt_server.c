@@ -595,7 +595,8 @@ void *clientThread(void *arg) {
  } 
  else if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == PINGREQ) {
   // mqttControlPacketResp vorbereiten und in Puffer zum Versand ablegen
-  // PINGRESP ist notwendig für Telegraf und laut Spezifikation ein Muss: 2023-02-20T19:53:29Z E! [inputs.mqtt_consumer] Error in plugin: connection lost: pingresp not received, disconnecting
+  // PINGRESP ist notwendig für Telegraf: 2023-02-20T19:53:29Z E! [inputs.mqtt_consumer] Error in plugin: connection lost: pingresp not received, disconnecting
+  // FIXME PINGRESP muss in einem weiteren Thread gestartet werden. Bestenfalls für die Subscriber einen Publish- und einen Pingresp-Thread. 
   mqttControlPacketPingrespTpl *mqttControlPacketPingresp = (mqttControlPacketPingrespTpl*) malloc(sizeof(mqttControlPacketPingrespTpl));
 
   index = 0;
