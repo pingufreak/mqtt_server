@@ -8,6 +8,8 @@ enum mqttControlPacketTypes {
  SUBACK = 9,
  UNSUBSCRIBE = 10,
  UNSUBACK = 11,
+ PINGREQ = 13,
+ PINGRESP = 13,
  DISCONNECT = 14
 };
 
@@ -176,3 +178,14 @@ typedef struct {
  };
  uint8_t mqttFixedHeaderRemainingLength; 
 } mqttControlPacketDisconnectTpl;
+
+typedef struct {
+ union {
+  uint8_t mqttFixedHeaderByte1;
+  struct {
+   unsigned mqttControlPacketFlags : 4;
+   unsigned mqttControlPacketType : 4;
+  } mqttFixedHeaderByte1Bits;
+ };
+ uint8_t mqttFixedHeaderRemainingLength; 
+} mqttControlPacketPingrespTpl; 

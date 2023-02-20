@@ -272,7 +272,7 @@ void *clientThread(void *arg) {
  int index = 0;
 
  // Dynamische Längen sind in unserem Anwendungsfall nicht notwendig, daher werden die Puffer-Längen statisch definiert
- uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[13], mqttControlPacketPublishSendBuffer[14], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2];
+ uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[13], mqttControlPacketPublishSendBuffer[14], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2], mqttControlPacketPingrespBuffer[2];
  
  // ###################### 
  // ### recv() CONNECT ###  
@@ -582,9 +582,9 @@ void *clientThread(void *arg) {
 
    /* Deaktiviert da der Server nicht bei Broken Pipe abstürzen soll, wenn die Gegenseite zuerst schließt  
    errno = 0;
-   send(clientSocketFDTmp, &mqttControlPacketPublishSendBuffer, sizeof(mqttControlPacketPublishSendBuffer), 0);
    if( errno != 0 ) { handle_error("send() mqttControlPacketPublishSendBuffer"); };
    */
+   send(clientSocketFDTmp, &mqttControlPacketPublishSendBuffer, sizeof(mqttControlPacketPublishSendBuffer), 0);
 
    free(mqttFixedHeader);
    free(mqttControlPacketPublish);
@@ -593,6 +593,24 @@ void *clientThread(void *arg) {
    sem_post(&semQueueEmpty);
   }
  } 
+ else if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == PINGREQ) {
+  // mqttControlPacketResp vorbereiten und in Puffer zum Versand ablegen
+  // PINGRESP ist notwendig für Telegraf und laut Spezifikation ein Muss: 2023-02-20T19:53:29Z E! [inputs.mqtt_consumer] Error in plugin: connection lost: pingresp not received, disconnecting
+  mqttControlPacketPingrespTpl *mqttControlPacketPingresp = (mqttControlPacketPingrespTpl*) malloc(sizeof(mqttControlPacketPingrespTpl));
+
+  index = 0;
+ 
+  mqttControlPacketPingresp->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
+  mqttControlPacketPingresp->mqttFixedHeaderByte1Bits.mqttControlPacketType = PINGRESP;
+  mqttControlPacketPingrespBuffer[index++] = mqttControlPacketPingresp->mqttFixedHeaderByte1;
+   
+  mqttControlPacketPingresp->mqttFixedHeaderRemainingLength = 0;
+  mqttControlPacketPingrespBuffer[index++] = mqttControlPacketPingresp->mqttFixedHeaderRemainingLength;
+
+  send(clientSocketFDTmp, &mqttControlPacketPingrespBuffer, sizeof(mqttControlPacketPingrespBuffer), 0);
+
+  free(mqttControlPacketPingresp);
+ }
  else {
   #ifdef DEBUG 
   printf("debug: close() ungültiger Paket-Typ.\n");
@@ -600,7 +618,6 @@ void *clientThread(void *arg) {
   close(clientSocketFDTmp);
  }
 
- /*
  // ######################### 
  // ### recv() DISCONNECT ###  
  // #########################
@@ -609,10 +626,14 @@ void *clientThread(void *arg) {
  #ifdef DEBUG 
  printf("debug: recv(): mqttControlPacketDisconnectBuffer\n");
  #endif
- errno = 0;
- recv(clientSocketFDTmp, &mqttControlPacketDisconnectBuffer, sizeof(mqttControlPacketDisconnectBuffer), 0);
- if( errno != 0 ) { handle_error("receive() mqttControlPacketDisconnectBuffer"); };
 
+ /* Deaktiviert da der Server nicht bei Broken Pipe abstürzen soll, wenn die Gegenseite schon geschlossen ist
+ errno = 0;
+ if( errno != 0 ) { handle_error("receive() mqttControlPacketDisconnectBuffer"); };
+ */
+
+ recv(clientSocketFDTmp, &mqttControlPacketDisconnectBuffer, sizeof(mqttControlPacketDisconnectBuffer), 0);
+ 
  // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
  mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
  mqttControlPacketDisconnect->mqttFixedHeaderByte1 = mqttControlPacketDisconnectBuffer[index++];
@@ -631,7 +652,6 @@ void *clientThread(void *arg) {
  }
 
  free(mqttControlPacketDisconnect);
- */
 
 /* 
  free(value);
@@ -739,7 +759,7 @@ int checkMqttControlPacketPublish(mqttControlPacketPublishTpl *mqttControlPacket
 
 int checkMqttControlPacketDisconnect(mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect) { 
  if(mqttControlPacketDisconnect->mqttFixedHeaderByte1 != 224) {
-  printf("mqttFixedHeaderByte1 != 224, ungültiger Disconnect Header\n");
+  printf("mqttFixedHeaderByte1 %d != 224, ungültiger Disconnect Header\n", mqttControlPacketDisconnect->mqttFixedHeaderByte1);
   return 1;
  }
 
