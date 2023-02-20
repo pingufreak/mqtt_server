@@ -12,11 +12,15 @@
 #include <stdbool.h>
 #include "mqtt_struct_queue.c"
 #include <semaphore.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <syslog.h>
 
-#define DEBUG
+// #define DEBUG
 
-const char    *SERVER_IP = "127.0.0.1";
-const char    *SERVER_IF = "lo";
+const char    *SERVER_IP = "192.168.0.2";
+const char    *SERVER_IF = "eth0";
 const uint16_t SERVER_PORT = 1883;
 const uint8_t  SEM_WAIT = 10;
 
@@ -39,7 +43,63 @@ typedef struct clientThreadStructTpl {
 sem_t semQueueFull, semQueueEmpty;
 pthread_mutex_t mutex;
 
+// https://github.com/pasce/daemon-skeleton-linux-c
+static void skeleton_daemon()
+{
+    pid_t pid;
+    
+    /* Fork off the parent process */
+    pid = fork();
+    
+    /* An error occurred */
+    if (pid < 0)
+        exit(EXIT_FAILURE);
+    
+     /* Success: Let the parent terminate */
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+    
+    /* On success: The child process becomes session leader */
+    if (setsid() < 0)
+        exit(EXIT_FAILURE);
+    
+    /* Catch, ignore and handle signals */
+    /*TODO: Implement a working signal handler */
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGHUP, SIG_IGN);
+    
+    /* Fork off for the second time*/
+    pid = fork();
+    
+    /* An error occurred */
+    if (pid < 0)
+        exit(EXIT_FAILURE);
+    
+    /* Success: Let the parent terminate */
+    if (pid > 0)
+        exit(EXIT_SUCCESS);
+    
+    /* Set new file permissions */
+    umask(0);
+    
+    /* Change the working directory to the root directory */
+    /* or another appropriated directory */
+    chdir("/");
+    
+    /* Close all open file descriptors */
+    int x;
+    for (x = sysconf(_SC_OPEN_MAX); x>=0; x--)
+    {
+        close (x);
+    }
+    
+    /* Open the log file */
+    openlog ("mqtt_server", LOG_PID, LOG_DAEMON);
+}
+
 int main(int argc, char *argv) {
+ //syslog(LOG_NOTICE, "starting...");
+ //skeleton_daemon();
  int serverSocketFD, clientSocketFD;
  struct sockaddr_in serverSocketSettings, clientSocketSettings;
 
@@ -191,7 +251,8 @@ int main(int argc, char *argv) {
  return EXIT_SUCCESS;
 }
 
-void *clientThread(void *arg) {  
+void *clientThread(void *arg) {
+ signal(SIGPIPE, SIG_IGN);
  // ###################### 
  // ### Vordefiniertes ###  
  // ###################### 
@@ -211,7 +272,7 @@ void *clientThread(void *arg) {
  int index = 0;
 
  // Dynamische Längen sind in unserem Anwendungsfall nicht notwendig, daher werden die Puffer-Längen statisch definiert
- uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[9], mqttControlPacketPublishSendBuffer[10], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2];
+ uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[13], mqttControlPacketPublishSendBuffer[14], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2];
  
  // ###################### 
  // ### recv() CONNECT ###  
@@ -335,7 +396,11 @@ void *clientThread(void *arg) {
   mqttControlPacketPublish->mqttVariableHeaderTopicNameChar2 = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar0 = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = mqttControlPacketPublishBuffer[index++];
-  mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = mqttControlPacketPublishBuffer[index];
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = mqttControlPacketPublishBuffer[index++];
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar3 = mqttControlPacketPublishBuffer[index++];
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar4 = mqttControlPacketPublishBuffer[index++];
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar5 = mqttControlPacketPublishBuffer[index++];
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar6 = mqttControlPacketPublishBuffer[index];
 
   // Mit der Struktur können die Daten einfach zerlegt und geprüft werden. Dies geschieht 
   // in der Funktion checkMqttControlPacketPublish(). Schlägt diese Prüfung fehl, wird hier
@@ -367,11 +432,15 @@ void *clientThread(void *arg) {
   value[0] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar0; 
   value[1] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1; 
   value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
+  value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar3;
+  value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar4;
+  value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar5;
+  value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar6;
   value[3] = '\0';
  
   // Der Topic und Value werden in einem neuen Element in der Queue gespeichert. Es gilt FIFO.
   #ifdef DEBUG 
-  printf("debug: enqueue(): topic: %s, value: %s\n", topic, value);
+  printf("debug: enqueue(): topic: %s, value: %s.\n", topic, value);
   #endif
   enqueue(queue, topic, value);
 
@@ -477,7 +546,7 @@ void *clientThread(void *arg) {
    mqttFixedHeader->mqttFixedHeaderByte1Bits.mqttControlPacketType = PUBLISH;
    mqttControlPacketPublishSendBuffer[index++] = mqttFixedHeader->mqttFixedHeaderByte1;
    
-   mqttControlPacketPublish->mqttFixedHeaderRemainingLength = 8;
+   mqttControlPacketPublish->mqttFixedHeaderRemainingLength = 12;
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttFixedHeaderRemainingLength;
  
    mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB = 0;
@@ -486,11 +555,9 @@ void *clientThread(void *arg) {
    mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = 3;
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB;
 
-   printf("%d\n", getElementCount(queue));
-
    dequeue(queue, &topic, &value);
    
-   printf("debug: dequeue(): topic: %s, value: %s\n", topic, value);
+   printf("debug: dequeue(): topic: %s, value: %s.\n", topic, value);
 
    mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0 = topic[0];
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0;
@@ -504,12 +571,21 @@ void *clientThread(void *arg) {
    mqttControlPacketPublish->mqttVariableHeaderPayloadChar1 = value[1];
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1; 
    mqttControlPacketPublish->mqttVariableHeaderPayloadChar2 = value[2];  
-   mqttControlPacketPublishSendBuffer[index] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
-  
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar3 = value[3];  
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar3;
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar4 = value[4];  
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar4;
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar5 = value[5];  
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar5;
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar6 = value[6];  
+
+   /* Deaktiviert da der Server nicht bei Broken Pipe abstürzen soll, wenn die Gegenseite zuerst schließt  
    errno = 0;
    send(clientSocketFDTmp, &mqttControlPacketPublishSendBuffer, sizeof(mqttControlPacketPublishSendBuffer), 0);
    if( errno != 0 ) { handle_error("send() mqttControlPacketPublishSendBuffer"); };
-   
+   */
+
    free(mqttFixedHeader);
    free(mqttControlPacketPublish);
 
@@ -524,6 +600,7 @@ void *clientThread(void *arg) {
   close(clientSocketFDTmp);
  }
 
+ /*
  // ######################### 
  // ### recv() DISCONNECT ###  
  // #########################
@@ -554,6 +631,7 @@ void *clientThread(void *arg) {
  }
 
  free(mqttControlPacketDisconnect);
+ */
 
 /* 
  free(value);
@@ -641,8 +719,8 @@ int checkMqttControlPacketConnect(mqttControlPacketConnectTpl *mqttControlPacket
 }
 
 int checkMqttControlPacketPublish(mqttControlPacketPublishTpl *mqttControlPacketPublish) {
- if(mqttControlPacketPublish->mqttFixedHeaderRemainingLength != 8) {
-  printf("mqttFixedHeaderRemainingLength != 8, aus Performance-Gründen nur eine statische Länge\n");
+ if(mqttControlPacketPublish->mqttFixedHeaderRemainingLength != 13) {
+  printf("mqttFixedHeaderRemainingLength != 13, aus Performance-Gründen nur eine statische Länge\n");
   return 1;
  }
 

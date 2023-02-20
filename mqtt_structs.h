@@ -89,6 +89,10 @@ typedef struct {
  uint8_t mqttVariableHeaderPayloadChar0;           // byte 6
  uint8_t mqttVariableHeaderPayloadChar1;           // byte 7
  uint8_t mqttVariableHeaderPayloadChar2;           // byte 8
+ uint8_t mqttVariableHeaderPayloadChar3;           // byte 9
+ uint8_t mqttVariableHeaderPayloadChar4;           // byte 10
+ uint8_t mqttVariableHeaderPayloadChar5;           // byte 11
+ uint8_t mqttVariableHeaderPayloadChar6;           // byte 12
 } mqttControlPacketPublishTpl;
 
 typedef struct {
