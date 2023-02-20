@@ -17,7 +17,7 @@
 #include <sys/stat.h>
 #include <syslog.h>
 
-// #define DEBUG
+#define DEBUG
 
 const char    *SERVER_IP = "192.168.0.2";
 const char    *SERVER_IF = "eth0";
@@ -224,6 +224,8 @@ int main(int argc, char *argv) {
   #ifdef DEBUG 
   printf("debug: pthread_create clientSocketFD\n"); 
   #endif
+
+  sleep(10);
  }
 
  errno = 0;
