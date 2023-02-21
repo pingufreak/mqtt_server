@@ -22,7 +22,7 @@
 const char    *SERVER_IP = "192.168.0.2";
 const char    *SERVER_IF = "eth0";
 const uint16_t SERVER_PORT = 1883;
-const uint8_t  SEM_WAIT = 10;
+const uint8_t  SEM_WAIT = 100;
 
 // Aus bind(2) Beispiel 
 #define handle_error(msg) do { perror(msg); exit(EXIT_FAILURE); } while (0)
@@ -47,70 +47,69 @@ typedef struct subscriberRequestThreadStructTpl {
 } subscriberRequestThreadStructTpl;
 
 sem_t semQueueFull, semQueueEmpty;
-pthread_mutex_t mutex;
+pthread_mutex_t mutex, mutexSubscriberRecv;
 
 // https://github.com/pasce/daemon-skeleton-linux-c
-static void skeleton_daemon()
-{
-    pid_t pid;
+static void skeleton_daemon() {
+ pid_t pid;
+  
+ /* Fork off the parent process */
+ pid = fork();
+ 
+ /* An error occurred */
+ if (pid < 0)
+  exit(EXIT_FAILURE);
+ 
+ /* Success: Let the parent terminate */
+ if (pid > 0)
+  exit(EXIT_SUCCESS);
     
-    /* Fork off the parent process */
-    pid = fork();
+ /* On success: The child process becomes session leader */
+ if (setsid() < 0)
+  exit(EXIT_FAILURE);
     
-    /* An error occurred */
-    if (pid < 0)
-        exit(EXIT_FAILURE);
+ /* Catch, ignore and handle signals */
+ /*TODO: Implement a working signal handler */
+ signal(SIGCHLD, SIG_IGN);
+ signal(SIGHUP, SIG_IGN);
     
-     /* Success: Let the parent terminate */
-    if (pid > 0)
-        exit(EXIT_SUCCESS);
+ /* Fork off for the second time*/
+ pid = fork();
     
-    /* On success: The child process becomes session leader */
-    if (setsid() < 0)
-        exit(EXIT_FAILURE);
+ /* An error occurred */
+ if (pid < 0)
+  exit(EXIT_FAILURE);
     
-    /* Catch, ignore and handle signals */
-    /*TODO: Implement a working signal handler */
-    signal(SIGCHLD, SIG_IGN);
-    signal(SIGHUP, SIG_IGN);
+ /* Success: Let the parent terminate */
+ if (pid > 0)
+  exit(EXIT_SUCCESS);
     
-    /* Fork off for the second time*/
-    pid = fork();
+ /* Set new file permissions */
+ umask(0);
     
-    /* An error occurred */
-    if (pid < 0)
-        exit(EXIT_FAILURE);
+ /* Change the working directory to the root directory */
+ /* or another appropriated directory */
+ chdir("/");
     
-    /* Success: Let the parent terminate */
-    if (pid > 0)
-        exit(EXIT_SUCCESS);
+ /* Close all open file descriptors */
+ int x;
+ for (x = sysconf(_SC_OPEN_MAX); x>=0; x--) {
+  close (x);
+ }
     
-    /* Set new file permissions */
-    umask(0);
-    
-    /* Change the working directory to the root directory */
-    /* or another appropriated directory */
-    chdir("/");
-    
-    /* Close all open file descriptors */
-    int x;
-    for (x = sysconf(_SC_OPEN_MAX); x>=0; x--)
-    {
-        close (x);
-    }
-    
-    /* Open the log file */
-    openlog ("mqtt_server", LOG_PID, LOG_DAEMON);
+ /* Open the log file */
+ openlog ("mqtt_server", LOG_PID, LOG_DAEMON);
 }
 
 int main(int argc, char *argv) {
- //syslog(LOG_NOTICE, "starting...");
- //skeleton_daemon();
+ // syslog(LOG_NOTICE, "starting...");
+ // skeleton_daemon();
  int serverSocketFD, clientSocketFD;
  struct sockaddr_in serverSocketSettings, clientSocketSettings;
 
  // Producer Consumer auf Basis von http://shivammitra.com/c/producer-consumer-problem-in-c/#
  pthread_mutex_init(&mutex, NULL);
+ pthread_mutex_init(&mutexSubscriberRecv, NULL);
  sem_init(&semQueueEmpty, 0, SEM_WAIT);
  sem_init(&semQueueFull, 0, 0);
 
@@ -224,8 +223,6 @@ int main(int argc, char *argv) {
   #ifdef DEBUG 
   printf("debug: pthread_create clientSocketFD\n"); 
   #endif
-
-  sleep(10);
  }
 
  errno = 0;
@@ -241,6 +238,13 @@ int main(int argc, char *argv) {
  errno = 0;
  pthread_mutex_destroy(&mutex);
  if( errno != 0 ) { handle_error("pthread_mutex_destroy(&mutex)"); };
+
+ #ifdef DEBUG 
+ printf("debug: pthread_mutex_destroy(&mutexSubscriberRecv)\n");
+ #endif
+ errno = 0;
+ pthread_mutex_destroy(&mutexSubscriberRecv);
+ if( errno != 0 ) { handle_error("pthread_mutex_destroy(&mutexSubscriberRecv)"); };
 
  #ifdef DEBUG 
  printf("debug: sem_destroy(&semQueueEmpty)\n");
@@ -259,6 +263,9 @@ int main(int argc, char *argv) {
  return EXIT_SUCCESS;
 }
 
+/* 
+ Subscriber Request Thread
+*/  
 void *subscriberRequestThread(void *arg) {
  signal(SIGPIPE, SIG_IGN);
 
@@ -288,6 +295,8 @@ void *subscriberRequestThread(void *arg) {
   errno = 0;
   recv(clientSocketFDTmp, &mqttFixedHeaderBuffer, sizeof(mqttFixedHeaderBuffer), 0);
   if( errno != 0 ) { handle_error("receive() mqttFixedHeaderBuffer"); };
+
+  pthread_mutex_lock(&mutexSubscriberRecv);
 
   // Erstes Byte vom FixedHeader lesen
   mqttFixedHeaderTpl mqttFixedHeader;
@@ -326,9 +335,14 @@ void *subscriberRequestThread(void *arg) {
 
    free(mqttControlPacketPingresp);
   }
+
+  pthread_mutex_unlock(&mutexSubscriberRecv);
  }
 }
 
+/* 
+ Client Thread (Publisher / Subscriber)
+*/  
 void *clientThread(void *arg) {
  signal(SIGPIPE, SIG_IGN);
  // ###################### 
@@ -350,7 +364,7 @@ void *clientThread(void *arg) {
  int index = 0;
 
  // Dynamische Längen sind in unserem Anwendungsfall nicht notwendig, daher werden die Puffer-Längen statisch definiert
- uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[13], mqttControlPacketPublishSendBuffer[14], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2];
+ uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketConnectBuffer[17], mqttControlPacketConnectackBuffer[4], mqttControlPacketPublishBuffer[14], mqttControlPacketPublishSendBuffer[15], mqttControlPacketSubscribeBuffer[9], mqttControlPacketSubackBuffer[5], mqttControlPacketDisconnectBuffer[2];
  
  // ###################### 
  // ### recv() CONNECT ###  
@@ -478,7 +492,8 @@ void *clientThread(void *arg) {
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar3 = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar4 = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderPayloadChar5 = mqttControlPacketPublishBuffer[index++];
-  mqttControlPacketPublish->mqttVariableHeaderPayloadChar6 = mqttControlPacketPublishBuffer[index];
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar6 = mqttControlPacketPublishBuffer[index++];
+  mqttControlPacketPublish->mqttVariableHeaderPayloadChar7 = mqttControlPacketPublishBuffer[index];
 
   // Mit der Struktur können die Daten einfach zerlegt und geprüft werden. Dies geschieht 
   // in der Funktion checkMqttControlPacketPublish(). Schlägt diese Prüfung fehl, wird hier
@@ -510,11 +525,12 @@ void *clientThread(void *arg) {
   value[0] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar0; 
   value[1] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar1; 
   value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar2;
-  value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar3;
-  value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar4;
-  value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar5;
-  value[2] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar6;
-  value[3] = '\0';
+  value[3] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar3;
+  value[4] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar4;
+  value[5] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar5;
+  value[6] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar6;
+  value[7] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar7;
+  value[8] = '\0';
  
   // Der Topic und Value werden in einem neuen Element in der Queue gespeichert. Es gilt FIFO.
   #ifdef DEBUG 
@@ -544,20 +560,6 @@ void *clientThread(void *arg) {
   printf("debug: recv(): mqttControlPacketSubscribeBuffer\n");
   #endif
 
-/*
-  // PINGRESP Thread starten
-  subscriberRequestThreadStructTpl subscriberRequestThreadStruct;
-  subscriberRequestThreadStruct.clientSocketFD = clientSocketFDTmp;
-
-  pthread_t threadId = (pthread_t) malloc(sizeof(pthread_t));
-  errno = 0;
-  pthread_create( &threadId, NULL, subscriberRequestThread, (void *) &subscriberRequestThreadStruct);
-  if( errno != 0 ) { handle_error("pthread_create()"); };
-  #ifdef DEBUG 
-  printf("debug: pthread_create clientSocketFD\n"); 
-  #endif
-*/
-
   errno = 0;
   recv(clientSocketFDTmp, &mqttControlPacketSubscribeBuffer, sizeof(mqttControlPacketSubscribeBuffer), 0);
   if( errno != 0 ) { handle_error("receive() mqttControlPacketSubscribeBuffer"); };
@@ -583,11 +585,6 @@ void *clientThread(void *arg) {
    mqttControlPacketSubscribe->mqttVariableHeaderTopicFilterChar2
   );
  
-  // QUEUE DEQUEUE
-  // SPÄTER MIT SEMAPHOREN ARBEITEN
-
-  // FIXME: SUBSCRIBE AUSWERTEN!!!
-  
   free(mqttControlPacketSubscribe);
 
   /*
@@ -617,6 +614,23 @@ void *clientThread(void *arg) {
   
   free(mqttControlPacketSuback);
 
+ printf("POWPOWPO\n");
+ 
+  /*
+   subscriberRequestThread starten, wartet auf PINGREQ / DISCONNECT
+  */
+
+  subscriberRequestThreadStructTpl subscriberRequestThreadStruct;
+  subscriberRequestThreadStruct.clientSocketFD = clientSocketFDTmp;
+
+  pthread_t threadId = (pthread_t) malloc(sizeof(pthread_t));
+  errno = 0;
+  pthread_create( &threadId, NULL, subscriberRequestThread, (void *) &subscriberRequestThreadStruct);
+  if( errno != 0 ) { handle_error("pthread_create()"); };
+  #ifdef DEBUG 
+  printf("debug: pthread_create clientSocketFD\n"); 
+  #endif
+
   /*
    send() PUBLISH von dequeue
   */
@@ -638,7 +652,7 @@ void *clientThread(void *arg) {
    mqttFixedHeader->mqttFixedHeaderByte1Bits.mqttControlPacketType = PUBLISH;
    mqttControlPacketPublishSendBuffer[index++] = mqttFixedHeader->mqttFixedHeaderByte1;
    
-   mqttControlPacketPublish->mqttFixedHeaderRemainingLength = 12;
+   mqttControlPacketPublish->mqttFixedHeaderRemainingLength = 13;
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttFixedHeaderRemainingLength;
  
    mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB = 0;
@@ -648,8 +662,10 @@ void *clientThread(void *arg) {
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB;
 
    dequeue(queue, &topic, &value);
-   
+
+   #ifdef DEBUG 
    printf("debug: dequeue(): topic: %s, value: %s.\n", topic, value);
+   #endif
 
    mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0 = topic[0];
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameChar0;
@@ -671,6 +687,9 @@ void *clientThread(void *arg) {
    mqttControlPacketPublish->mqttVariableHeaderPayloadChar5 = value[5];  
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar5;
    mqttControlPacketPublish->mqttVariableHeaderPayloadChar6 = value[6];  
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar6;
+   mqttControlPacketPublish->mqttVariableHeaderPayloadChar7 = value[7];  
+   mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderPayloadChar7;
 
    /* Deaktiviert da der Server nicht bei Broken Pipe abstürzen soll, wenn die Gegenseite zuerst schließt  
    errno = 0;
@@ -704,7 +723,7 @@ void *clientThread(void *arg) {
  /* Deaktiviert da der Server nicht bei Broken Pipe abstürzen soll, wenn die Gegenseite schon geschlossen ist
  errno = 0;
  if( errno != 0 ) { handle_error("receive() mqttControlPacketDisconnectBuffer"); };
- */
+ */ 
 
  recv(clientSocketFDTmp, &mqttControlPacketDisconnectBuffer, sizeof(mqttControlPacketDisconnectBuffer), 0);
  
