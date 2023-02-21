@@ -373,6 +373,7 @@ void *subscriberRequestThread(void *arg) {
     #ifdef DEBUG 
     printf("debug: checkMqttControlPacketDisconnect(): nicht konform.\n");
     #endif
+    disconnectReceived = true;
    }
    else {
     disconnectReceived = true;
