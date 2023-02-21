@@ -38,12 +38,12 @@ int checkMqttControlPacketPublish(mqttControlPacketPublishTpl *mqttControlPacket
 int checkMqttControlPacketDisconnect(mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect);
 
 typedef struct clientThreadStructTpl {
-  int clientSocketFD;
+  int *clientSocketFD;
   Queue *queue;
 } clientThreadStructTpl;
 
 typedef struct subscriberRequestThreadStructTpl {
-  int clientSocketFD;
+  int *clientSocketFD;
 } subscriberRequestThreadStructTpl;
 
 sem_t semQueueFull, semQueueEmpty;
@@ -209,7 +209,7 @@ int main(int argc, char *argv) {
  while(1) {
   errno = 0;
   clientSocketFD = accept(serverSocketFD, (struct sockaddr*)&clientSocketSettings, &clientSocketSettingsLength);
-  clientThreadStruct.clientSocketFD = clientSocketFD;
+  clientThreadStruct.clientSocketFD = &clientSocketFD;
   
   if( errno != 0 ) { handle_error("accept() serverSocketFD"); };
   #ifdef DEBUG 
@@ -277,12 +277,14 @@ void *subscriberRequestThread(void *arg) {
  subscriberRequestThreadStructTpl *subscriberRequestThreadStruct = (subscriberRequestThreadStructTpl *) arg;
 
  // In der Struktur befindet sich der Client-Socket
- int clientSocketFDTmp = subscriberRequestThreadStruct->clientSocketFD;
+ int *clientSocketFDTmp = subscriberRequestThreadStruct->clientSocketFD;
 
  // Dynamische Längen sind in unserem Anwendungsfall nicht notwendig, daher werden die Puffer-Längen statisch definiert
  uint8_t mqttFixedHeaderBuffer[1], mqttControlPacketPingreqBuffer[0], mqttControlPacketPingrespBuffer[2];
  
- while(1) {
+ while(1) {  
+  sleep(1);
+
   // ###################### 
   // ### recv() FIXEDHD ###  
   // ###################### 
@@ -293,7 +295,7 @@ void *subscriberRequestThread(void *arg) {
   printf("debug: recv(): mqttFixedHeaderBuffer\n");
   #endif
   errno = 0;
-  recv(clientSocketFDTmp, &mqttFixedHeaderBuffer, sizeof(mqttFixedHeaderBuffer), 0);
+  recv(*clientSocketFDTmp, &mqttFixedHeaderBuffer, sizeof(mqttFixedHeaderBuffer), 0);
   if( errno != 0 ) { handle_error("receive() mqttFixedHeaderBuffer"); };
 
   pthread_mutex_lock(&mutexSubscriberRecv);
@@ -309,7 +311,7 @@ void *subscriberRequestThread(void *arg) {
    printf("debug: recv(): mqttControlPacketPingreqBuffer\n");
    #endif
    errno = 0;
-   recv(clientSocketFDTmp, &mqttControlPacketPingreqBuffer, sizeof(mqttControlPacketPingreqBuffer), 0);
+   recv(*clientSocketFDTmp, &mqttControlPacketPingreqBuffer, sizeof(mqttControlPacketPingreqBuffer), 0);
    if( errno != 0 ) { handle_error("recv() mqttControlPacketPingreqBuffer"); };
 
    // Speicher für die MQTT-Pingreq Struktur reservieren und den Puffer dort abspeichern.
@@ -331,11 +333,11 @@ void *subscriberRequestThread(void *arg) {
    mqttControlPacketPingresp->mqttFixedHeaderRemainingLength = 0;
    mqttControlPacketPingrespBuffer[index++] = mqttControlPacketPingresp->mqttFixedHeaderRemainingLength;
 
-   send(clientSocketFDTmp, &mqttControlPacketPingrespBuffer, sizeof(mqttControlPacketPingrespBuffer), 0);
+   send(*clientSocketFDTmp, &mqttControlPacketPingrespBuffer, sizeof(mqttControlPacketPingrespBuffer), 0);
 
+   free(mqttControlPacketPingreq);
    free(mqttControlPacketPingresp);
   }
-
   pthread_mutex_unlock(&mutexSubscriberRecv);
  }
 }
@@ -353,7 +355,7 @@ void *clientThread(void *arg) {
  clientThreadStructTpl *clientThreadStruct = (clientThreadStructTpl *) arg;
 
  // In der Struktur befindet sich der Client-Socket
- int clientSocketFDTmp = clientThreadStruct->clientSocketFD;
+ int *clientSocketFDTmp = clientThreadStruct->clientSocketFD;
 
  // In der Queue werden:
  // - eingehende PUBLISH-Nachrichten (Publisher) abgelegt
@@ -375,7 +377,7 @@ void *clientThread(void *arg) {
  printf("debug: recv(): mqttControlPacketConnectBuffer\n");
  #endif
  errno = 0;
- recv(clientSocketFDTmp, &mqttControlPacketConnectBuffer, sizeof(mqttControlPacketConnectBuffer), 0);
+ recv(*clientSocketFDTmp, &mqttControlPacketConnectBuffer, sizeof(mqttControlPacketConnectBuffer), 0);
  if( errno != 0 ) { handle_error("send() mqttControlPacketConnectBuffer"); };
 
  // Speicher für die MQTT-Connect Struktur reservieren und den Puffer dort abspeichern.
@@ -402,7 +404,7 @@ void *clientThread(void *arg) {
  // in der Funktion checkMqttControlPacketConnect(). Schlägt diese Prüfung fehl, wird hier
  // schon die Verbindung beendet und Speicher wieder freigegeben.
  if(checkMqttControlPacketConnect(mqttControlPacketConnect) != 0) {
-  close(clientSocketFDTmp);
+  close(*clientSocketFDTmp);
   free(mqttControlPacketConnect);
   #ifdef DEBUG 
   printf("debug: checkMqttControlPacketConnect(): nicht konform.\n");
@@ -436,7 +438,7 @@ void *clientThread(void *arg) {
  printf("debug: send(): mqttControlPacketConnectackBuffer\n");
  #endif
  errno = 0;
- send(clientSocketFDTmp, &mqttControlPacketConnectackBuffer, sizeof(mqttControlPacketConnectackBuffer), 0);
+ send(*clientSocketFDTmp, &mqttControlPacketConnectackBuffer, sizeof(mqttControlPacketConnectackBuffer), 0);
  if( errno != 0 ) { handle_error("send() mqttControlPacketConnectackBuffer"); };
 
  // Nach dem Versenden vom CONNACK Paket, den Speicher wieder freigeben.
@@ -453,7 +455,7 @@ void *clientThread(void *arg) {
  printf("debug: recv(): mqttFixedHeaderBuffer\n");
  #endif
  errno = 0;
- recv(clientSocketFDTmp, &mqttFixedHeaderBuffer, sizeof(mqttFixedHeaderBuffer), 0);
+ recv(*clientSocketFDTmp, &mqttFixedHeaderBuffer, sizeof(mqttFixedHeaderBuffer), 0);
  if( errno != 0 ) { handle_error("receive() mqttFixedHeaderBuffer"); };
 
  // Erstes Byte vom FixedHeader lesen
@@ -475,7 +477,7 @@ void *clientThread(void *arg) {
   printf("debug: recv(): mqttControlPacketPublishBuffer\n");
   #endif
   errno = 0;
-  recv(clientSocketFDTmp, &mqttControlPacketPublishBuffer, sizeof(mqttControlPacketPublishBuffer), 0);
+  recv(*clientSocketFDTmp, &mqttControlPacketPublishBuffer, sizeof(mqttControlPacketPublishBuffer), 0);
   if( errno != 0 ) { handle_error("receive() mqttControlPacketPublishBuffer"); };
  
   // Speicher für die MQTT-Publish Struktur reservieren und den Puffer dort abspeichern.
@@ -499,7 +501,7 @@ void *clientThread(void *arg) {
   // in der Funktion checkMqttControlPacketPublish(). Schlägt diese Prüfung fehl, wird hier
   // schon die Verbindung beendet und Speicher wieder freigegeben.
   if(checkMqttControlPacketPublish(mqttControlPacketPublish) != 0) {
-   close(clientSocketFDTmp);
+   close(*clientSocketFDTmp);
    free(mqttControlPacketPublish);
    #ifdef DEBUG 
    printf("debug: checkMqttControlPacketPublish(): nicht konform.\n");
@@ -561,7 +563,7 @@ void *clientThread(void *arg) {
   #endif
 
   errno = 0;
-  recv(clientSocketFDTmp, &mqttControlPacketSubscribeBuffer, sizeof(mqttControlPacketSubscribeBuffer), 0);
+  recv(*clientSocketFDTmp, &mqttControlPacketSubscribeBuffer, sizeof(mqttControlPacketSubscribeBuffer), 0);
   if( errno != 0 ) { handle_error("receive() mqttControlPacketSubscribeBuffer"); };
 
   // mqttControlPacketSubscribe vorbereiten und in Puffer zum Versand ablegen 
@@ -609,13 +611,11 @@ void *clientThread(void *arg) {
   mqttControlPacketSubackBuffer[index++] = mqttControlPacketSuback->mqttVariableHeaderSubackReturncode;
 
   errno = 0;
-  send(clientSocketFDTmp, &mqttControlPacketSubackBuffer, sizeof(mqttControlPacketSubackBuffer), 0);
+  send(*clientSocketFDTmp, &mqttControlPacketSubackBuffer, sizeof(mqttControlPacketSubackBuffer), 0);
   if( errno != 0 ) { handle_error("send() mqttControlPacketSubackBuffer"); };
   
   free(mqttControlPacketSuback);
 
- printf("POWPOWPO\n");
- 
   /*
    subscriberRequestThread starten, wartet auf PINGREQ / DISCONNECT
   */
@@ -695,7 +695,7 @@ void *clientThread(void *arg) {
    errno = 0;
    if( errno != 0 ) { handle_error("send() mqttControlPacketPublishSendBuffer"); };
    */
-   send(clientSocketFDTmp, &mqttControlPacketPublishSendBuffer, sizeof(mqttControlPacketPublishSendBuffer), 0);
+   send(*clientSocketFDTmp, &mqttControlPacketPublishSendBuffer, sizeof(mqttControlPacketPublishSendBuffer), 0);
 
    free(mqttFixedHeader);
    free(mqttControlPacketPublish);
@@ -708,7 +708,7 @@ void *clientThread(void *arg) {
   #ifdef DEBUG 
   printf("debug: close() ungültiger Paket-Typ.\n");
   #endif
-  close(clientSocketFDTmp);
+  close(*clientSocketFDTmp);
  }
 
  // ######################### 
@@ -725,7 +725,7 @@ void *clientThread(void *arg) {
  if( errno != 0 ) { handle_error("receive() mqttControlPacketDisconnectBuffer"); };
  */ 
 
- recv(clientSocketFDTmp, &mqttControlPacketDisconnectBuffer, sizeof(mqttControlPacketDisconnectBuffer), 0);
+ recv(*clientSocketFDTmp, &mqttControlPacketDisconnectBuffer, sizeof(mqttControlPacketDisconnectBuffer), 0);
  
  // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
  mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
@@ -736,7 +736,7 @@ void *clientThread(void *arg) {
  // in der Funktion checkMqttControlPacketDisconnect(). Schlägt diese Prüfung fehl, wird 
  // das Paket ignoriert und die Verbindung trotzdem terminiert.
  if(checkMqttControlPacketDisconnect(mqttControlPacketDisconnect) != 0) {
-  close(clientSocketFDTmp);
+  close(*clientSocketFDTmp);
   free(mqttControlPacketDisconnect);
   #ifdef DEBUG 
   printf("debug: checkMqttControlPacketDisconnect(): nicht konform.\n");

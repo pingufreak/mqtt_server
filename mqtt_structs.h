@@ -8,7 +8,7 @@ enum mqttControlPacketTypes {
  SUBACK = 9,
  UNSUBSCRIBE = 10,
  UNSUBACK = 11,
- PINGREQ = 13,
+ PINGREQ = 12,
  PINGRESP = 13,
  DISCONNECT = 14
 };
