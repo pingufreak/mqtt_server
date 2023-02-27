@@ -600,6 +600,9 @@ void *clientThread(void *arg) {
   // Nach dem Verarbeiten vom eingheneden PUBLISH Paket, kann der Speicher wieder fregegeben werden.
   free(mqttControlPacketPublish);
   index = 0;
+ 
+  // Socket schließen
+  close(clientSocketFDTmp);
  }
  // Prüfen ob es sich um ein SUBSCRIBer-Client handelt
  else if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == SUBSCRIBE) {
