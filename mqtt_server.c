@@ -216,7 +216,7 @@ int main(int argc, char *argv) {
   printf("debug: accept() serverSocketFD\n"); 
   #endif
 
-  pthread_t threadId = (pthread_t) malloc(sizeof(pthread_t));
+  pthread_t threadId = (pthread_t) calloc(1, sizeof(pthread_t));
   errno = 0;
   pthread_create( &threadId, NULL, clientThread, (void *) &clientThreadStruct);
   if( errno != 0 ) { handle_error("pthread_create()"); };
@@ -323,14 +323,14 @@ void *subscriberRequestThread(void *arg) {
    if( errno != 0 ) { handle_error("recv() mqttControlPacketPingreqBuffer"); };
 
    // Speicher für die MQTT-Pingreq Struktur reservieren und den Puffer dort abspeichern.
-   mqttControlPacketPingreqTpl *mqttControlPacketPingreq = (mqttControlPacketPingreqTpl*) malloc(sizeof(mqttControlPacketPingreqTpl)); 
+   mqttControlPacketPingreqTpl *mqttControlPacketPingreq = (mqttControlPacketPingreqTpl*) calloc(1, sizeof(mqttControlPacketPingreqTpl)); 
    mqttControlPacketPingreq->mqttFixedHeaderByte1 = mqttFixedHeader.mqttFixedHeaderByte1;
    mqttControlPacketPingreq->mqttFixedHeaderRemainingLength = mqttControlPacketPingreqBuffer[0];
    
    // mqttControlPacketResp vorbereiten und in Puffer zum Versand ablegen
    // PINGRESP ist notwendig für Telegraf: 2023-02-20T19:53:29Z E! [inputs.mqtt_consumer] Error in plugin: connection lost: pingresp not received, disconnecting
    // FIXME PINGRESP muss in einem weiteren Thread gestartet werden. Bestenfalls für die Subscriber einen Publish- und einen Pingresp-Thread. 
-   mqttControlPacketPingrespTpl *mqttControlPacketPingresp = (mqttControlPacketPingrespTpl*) malloc(sizeof(mqttControlPacketPingrespTpl));
+   mqttControlPacketPingrespTpl *mqttControlPacketPingresp = (mqttControlPacketPingrespTpl*) calloc(1, sizeof(mqttControlPacketPingrespTpl));
  
    mqttControlPacketPingresp->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
    mqttControlPacketPingresp->mqttFixedHeaderByte1Bits.mqttControlPacketType = PINGRESP;
@@ -362,7 +362,7 @@ void *subscriberRequestThread(void *arg) {
    recv(clientSocketFDTmp, &mqttControlPacketDisconnectBuffer, sizeof(mqttControlPacketDisconnectBuffer), 0);
  
    // mqttControlPacketDisconnect vorbereiten und in Puffer zum Versand ablegen 
-   mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) malloc(sizeof(mqttControlPacketDisconnectTpl));
+   mqttControlPacketDisconnectTpl *mqttControlPacketDisconnect = (mqttControlPacketDisconnectTpl*) calloc(1, sizeof(mqttControlPacketDisconnectTpl));
    mqttControlPacketDisconnect->mqttFixedHeaderByte1 = mqttFixedHeader.mqttFixedHeaderByte1;
    mqttControlPacketDisconnect->mqttFixedHeaderRemainingLength = mqttControlPacketDisconnectBuffer[1];
 
@@ -401,7 +401,8 @@ void *clientThread(void *arg) {
  // ###################### 
 
  // Struktur für den ClientThread wird als Argument übergeben
- clientThreadStructTpl *clientThreadStruct = (clientThreadStructTpl *) arg;
+ clientThreadStructTpl *clientThreadStruct = (clientThreadStructTpl*) calloc(1, sizeof(clientThreadStructTpl));
+ clientThreadStruct = arg;
 
  // In der Struktur befindet sich der Client-Socket
  int clientSocketFDTmp = clientThreadStruct->clientSocketFD;
@@ -434,7 +435,7 @@ void *clientThread(void *arg) {
  if( errno != 0 ) { handle_error("send() mqttControlPacketConnectBuffer"); };
 
  // Speicher für die MQTT-Connect Struktur reservieren und den Puffer dort abspeichern.
- mqttControlPacketConnectTpl *mqttControlPacketConnect = (mqttControlPacketConnectTpl*) malloc(sizeof(mqttControlPacketConnectTpl)); 
+ mqttControlPacketConnectTpl *mqttControlPacketConnect = (mqttControlPacketConnectTpl*) calloc(1, sizeof(mqttControlPacketConnectTpl)); 
  mqttControlPacketConnect->mqttFixedHeaderByte1 = mqttControlPacketConnectBuffer[index++];
  mqttControlPacketConnect->mqttFixedHeaderRemainingLength = mqttControlPacketConnectBuffer[index++];
  mqttControlPacketConnect->mqttVariableHeaderProtocolNameMSB = mqttControlPacketConnectBuffer[index++];
@@ -475,7 +476,7 @@ void *clientThread(void *arg) {
  // ###################### 
 
  // Speicher für die MQTT-Connectack Struktur reservieren, definieren und die Daten dem Puffer zum Versenden zuweisen.
- mqttControlPacketConnectackTpl *mqttControlPacketConnectack = (mqttControlPacketConnectackTpl*) malloc(sizeof(mqttControlPacketConnectackTpl));
+ mqttControlPacketConnectackTpl *mqttControlPacketConnectack = (mqttControlPacketConnectackTpl*) calloc(1, sizeof(mqttControlPacketConnectackTpl));
  mqttControlPacketConnectack->mqttFixedHeaderByte1Bits.mqttControlPacketFlags = 0;
  mqttControlPacketConnectack->mqttFixedHeaderByte1Bits.mqttControlPacketType = CONNACK;
  mqttControlPacketConnectackBuffer[index++] = mqttControlPacketConnectack->mqttFixedHeaderByte1;
@@ -515,10 +516,6 @@ void *clientThread(void *arg) {
  mqttFixedHeaderTpl mqttFixedHeader;
  mqttFixedHeader.mqttFixedHeaderByte1 = mqttFixedHeaderBuffer[0];
 
- // Da PUBLISHer- und SUBSCRIBEr-Client den Topic und Value benötigen, wird bereits hier Speicher reserviert.
- char *topic = malloc(4);
- char *value = malloc(4);
-
  // Prüfen ob es sich um ein PUBLISHer-Client handelt
  if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == PUBLISH) {
   // ###################### 
@@ -534,7 +531,7 @@ void *clientThread(void *arg) {
   if( errno != 0 ) { handle_error("receive() mqttControlPacketPublishBuffer"); };
  
   // Speicher für die MQTT-Publish Struktur reservieren und den Puffer dort abspeichern.
-  mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) malloc(sizeof(mqttControlPacketPublishTpl));
+  mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) calloc(1, sizeof(mqttControlPacketPublishTpl));
   mqttControlPacketPublish->mqttFixedHeaderRemainingLength = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderTopicNameLSB = mqttControlPacketPublishBuffer[index++];
   mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = mqttControlPacketPublishBuffer[index++];
@@ -567,6 +564,11 @@ void *clientThread(void *arg) {
   // vermieden.
   sem_wait(&semQueueEmpty);
   pthread_mutex_lock(&mutex);
+ 
+  // Speicher fuer topic und value reservieren
+  char *topic = (char*)calloc(1, 4);
+  char *value = (char*)calloc(1, 9);
+
 
   // Für den Topic werden statisch 3 Zeichen verwendet und mit \0 terminiert. Dadurch, dass statische
   // Längen verwendet werden, ist die Implementierung einfacher und die Laufzeit schneller, da der 
@@ -603,6 +605,10 @@ void *clientThread(void *arg) {
  
   // Socket schließen
   close(clientSocketFDTmp);
+
+  // Speichere wieder freigeben
+  free(value);
+  free(topic);
  }
  // Prüfen ob es sich um ein SUBSCRIBer-Client handelt
  else if(mqttFixedHeader.mqttFixedHeaderByte1Bits.mqttControlPacketType == SUBSCRIBE) {
@@ -623,7 +629,7 @@ void *clientThread(void *arg) {
   if( errno != 0 ) { handle_error("receive() mqttControlPacketSubscribeBuffer"); };
 
   // mqttControlPacketSubscribe vorbereiten und in Puffer zum Versand ablegen 
-  mqttControlPacketSubscribeTpl *mqttControlPacketSubscribe = (mqttControlPacketSubscribeTpl*) malloc(sizeof(mqttControlPacketSubscribeTpl));
+  mqttControlPacketSubscribeTpl *mqttControlPacketSubscribe = (mqttControlPacketSubscribeTpl*) calloc(1, sizeof(mqttControlPacketSubscribeTpl));
   
   index = 0;
  
@@ -650,7 +656,7 @@ void *clientThread(void *arg) {
   */
   
   // mqttControlPacketSuback vorbereiten für den Versand
-  mqttControlPacketSubackTpl *mqttControlPacketSuback = (mqttControlPacketSubackTpl*) malloc(sizeof(mqttControlPacketSubackTpl));
+  mqttControlPacketSubackTpl *mqttControlPacketSuback = (mqttControlPacketSubackTpl*) calloc(1, sizeof(mqttControlPacketSubackTpl));
  
   index = 0;
 
@@ -683,7 +689,7 @@ void *clientThread(void *arg) {
   printf("debug: socket %d an clientSocketSDTmp zugewiesen von Struktur subscriberRequestThreadStruct.clientSocketF\n", clientSocketFDTmp);
   #endif
 
-  pthread_t threadId = (pthread_t) malloc(sizeof(pthread_t));
+  pthread_t threadId = (pthread_t) calloc(1, sizeof(pthread_t));
   errno = 0;
   pthread_create( &threadId, NULL, subscriberRequestThread, (void *) &subscriberRequestThreadStruct);
   if( errno != 0 ) { handle_error("pthread_create()"); };
@@ -700,10 +706,10 @@ void *clientThread(void *arg) {
    pthread_mutex_lock(&mutex);
 
    // mqttControlPacketPublish vorbereiten und in Puffer zum Versand ablegen (+1 weil wir hier das erste Byte vom Header wieder braucehn)
-   mqttFixedHeaderTpl *mqttFixedHeader = (mqttFixedHeaderTpl*) malloc(sizeof(mqttFixedHeaderTpl));
+   mqttFixedHeaderTpl *mqttFixedHeader = (mqttFixedHeaderTpl*) calloc(1, sizeof(mqttFixedHeaderTpl));
 
    // mqttControlPacketPublish vorbereiten und in Puffer zum Versand ablegen (+1 weil wir hier das erste Byte vom Header wieder braucehn)
-   mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) malloc(sizeof(mqttControlPacketPublishTpl));
+   mqttControlPacketPublishTpl *mqttControlPacketPublish = (mqttControlPacketPublishTpl*) calloc(1, sizeof(mqttControlPacketPublishTpl));
 
    index = 0;
  
@@ -719,6 +725,10 @@ void *clientThread(void *arg) {
  
    mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB = 3;
    mqttControlPacketPublishSendBuffer[index++] = mqttControlPacketPublish->mqttVariableHeaderTopicNameMSB;
+
+   // Speicher fuer topic und value reservieren
+   char *topic = (char*)calloc(1, 3);
+   char *value = (char*)calloc(1, 8);
 
    dequeue(queue, &topic, &value);
 
@@ -759,6 +769,9 @@ void *clientThread(void *arg) {
    send(clientSocketFDTmp, &mqttControlPacketPublishSendBuffer, sizeof(mqttControlPacketPublishSendBuffer), 0);
    if( errno != 0 ) { handle_error("send() mqttControlPacketSubackBuffer"); };  
 
+   // Speichere wieder freigeben
+   free(value);
+   free(topic);
    free(mqttFixedHeader);
    free(mqttControlPacketPublish);
 
@@ -772,11 +785,6 @@ void *clientThread(void *arg) {
   #endif
   close(clientSocketFDTmp);
  }
-
-/* 
- free(value);
- free(topic);
-*/
 }
 
 int checkMqttControlPacketConnect(mqttControlPacketConnectTpl *mqttControlPacketConnect) {
